@@ -31,7 +31,6 @@ data/sandbox/
 data/knowledge_base/*.faiss
 
 # Model weights (downloaded from HuggingFace)
-models/
 *.safetensors
 *.bin
 !requirements.txt

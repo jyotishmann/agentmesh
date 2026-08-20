@@ -1,0 +1,402 @@
+[
+  {
+    "task_id": "factual_001",
+    "category": "factual_qa",
+    "task": "What is the capital of Australia and what is its population?",
+    "expected_tools": ["search_web"],
+    "difficulty": 1,
+    "grading_notes": "Should return Canberra with approximate population (~450k)."
+  },
+  {
+    "task_id": "factual_002",
+    "category": "factual_qa",
+    "task": "Who won the Nobel Prize in Physics in 2023 and what was their contribution?",
+    "expected_tools": ["search_web"],
+    "difficulty": 2,
+    "grading_notes": "Pierre Agostini, Ferenc Krausz, Anne L'Huillier for attosecond pulses."
+  },
+  {
+    "task_id": "factual_003",
+    "category": "factual_qa",
+    "task": "What are the three laws of thermodynamics? Explain each in one sentence.",
+    "expected_tools": [],
+    "difficulty": 1,
+    "grading_notes": "Can be answered from model knowledge. No tools needed."
+  },
+  {
+    "task_id": "factual_004",
+    "category": "factual_qa",
+    "task": "Compare the GDP of Japan and Germany in 2023. Which is higher?",
+    "expected_tools": ["search_web"],
+    "difficulty": 2,
+    "grading_notes": "Should find that Germany overtook Japan in nominal GDP in 2023."
+  },
+  {
+    "task_id": "factual_005",
+    "category": "factual_qa",
+    "task": "What programming language is the Linux kernel primarily written in?",
+    "expected_tools": [],
+    "difficulty": 1,
+    "grading_notes": "C (with some assembly and recently Rust). No tool needed."
+  },
+  {
+    "task_id": "factual_006",
+    "category": "factual_qa",
+    "task": "What is the difference between TCP and UDP? Give examples of when each is used.",
+    "expected_tools": [],
+    "difficulty": 2,
+    "grading_notes": "TCP: reliable, ordered (HTTP, SSH). UDP: fast, no guarantee (DNS, gaming, streaming)."
+  },
+  {
+    "task_id": "factual_007",
+    "category": "factual_qa",
+    "task": "Search the web for the current price of Bitcoin and its 24-hour change percentage.",
+    "expected_tools": ["search_web"],
+    "difficulty": 2,
+    "grading_notes": "Must use search. Should return a price and percentage."
+  },
+  {
+    "task_id": "factual_008",
+    "category": "factual_qa",
+    "task": "What is CRISPR-Cas9 and what are its medical applications?",
+    "expected_tools": ["search_web"],
+    "difficulty": 3,
+    "grading_notes": "Gene editing tool. Applications: sickle cell, cancer therapy, genetic disorders."
+  },
+  {
+    "task_id": "factual_009",
+    "category": "factual_qa",
+    "task": "How many moons does Saturn have? Name the five largest.",
+    "expected_tools": ["search_web"],
+    "difficulty": 2,
+    "grading_notes": "146 known moons. Largest: Titan, Rhea, Iapetus, Dione, Tethys."
+  },
+  {
+    "task_id": "factual_010",
+    "category": "factual_qa",
+    "task": "What is the Turing Test and has any AI system passed it?",
+    "expected_tools": ["search_web"],
+    "difficulty": 3,
+    "grading_notes": "Proposed by Turing 1950. Debatable claims. Should discuss nuances."
+  },
+  {
+    "task_id": "code_011",
+    "category": "code_generation",
+    "task": "Write a Python function to check if a number is prime and test it with the number 97.",
+    "expected_tools": ["run_python"],
+    "difficulty": 1,
+    "grading_notes": "Should run code. 97 is prime."
+  },
+  {
+    "task_id": "code_012",
+    "category": "code_generation",
+    "task": "Write a Python script that generates the first 20 Fibonacci numbers and prints them as a list.",
+    "expected_tools": ["run_python"],
+    "difficulty": 1,
+    "grading_notes": "Should output [0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, ...]."
+  },
+  {
+    "task_id": "code_013",
+    "category": "code_generation",
+    "task": "Write a Python function that takes a string and returns it reversed. Test with 'Hello World'.",
+    "expected_tools": ["run_python"],
+    "difficulty": 1,
+    "grading_notes": "Should return 'dlroW olleH'."
+  },
+  {
+    "task_id": "code_014",
+    "category": "code_generation",
+    "task": "Write a Python script that reads a CSV string with columns 'name,age,city' and three rows, then prints the average age.",
+    "expected_tools": ["run_python"],
+    "difficulty": 2,
+    "grading_notes": "Should use csv module or string splitting. Must compute correct average."
+  },
+  {
+    "task_id": "code_015",
+    "category": "code_generation",
+    "task": "Implement a binary search function in Python and test it by searching for 42 in a sorted list of 1 to 100.",
+    "expected_tools": ["run_python"],
+    "difficulty": 2,
+    "grading_notes": "Should return index 41 (0-indexed). Must implement, not use bisect."
+  },
+  {
+    "task_id": "code_016",
+    "category": "code_generation",
+    "task": "Write a Python class called Stack with push, pop, peek, and is_empty methods. Test all four methods.",
+    "expected_tools": ["run_python"],
+    "difficulty": 2,
+    "grading_notes": "Class-based. All methods tested. LIFO behavior demonstrated."
+  },
+  {
+    "task_id": "code_017",
+    "category": "code_generation",
+    "task": "Write a Python script that creates a file called 'output.txt' containing the multiplication table from 1 to 5.",
+    "expected_tools": ["run_python", "write_file"],
+    "difficulty": 3,
+    "grading_notes": "Should write file. May use run_python with open() or write_file tool."
+  },
+  {
+    "task_id": "code_018",
+    "category": "code_generation",
+    "task": "Write a Python function to flatten a nested list like [[1,2],[3,[4,5]],6] into [1,2,3,4,5,6]. Use recursion.",
+    "expected_tools": ["run_python"],
+    "difficulty": 3,
+    "grading_notes": "Must use recursion, not itertools.chain. Handle arbitrary nesting."
+  },
+  {
+    "task_id": "code_019",
+    "category": "code_generation",
+    "task": "Write a Python script that computes the SHA-256 hash of the string 'agentmesh' and prints it in hex.",
+    "expected_tools": ["run_python"],
+    "difficulty": 2,
+    "grading_notes": "Should use hashlib. Deterministic output."
+  },
+  {
+    "task_id": "code_020",
+    "category": "code_generation",
+    "task": "Implement merge sort in Python. Sort the list [38, 27, 43, 3, 9, 82, 10] and print each merge step.",
+    "expected_tools": ["run_python"],
+    "difficulty": 3,
+    "grading_notes": "Must show intermediate merge steps. Final: [3, 9, 10, 27, 38, 43, 82]."
+  },
+  {
+    "task_id": "multi_021",
+    "category": "multi_step",
+    "task": "Search the web for the population of the 5 largest US cities, then write a Python script that creates a bar chart description (text-based) showing their populations.",
+    "expected_tools": ["search_web", "run_python"],
+    "difficulty": 4,
+    "grading_notes": "Requires research then code. Should name cities and produce chart."
+  },
+  {
+    "task_id": "multi_022",
+    "category": "multi_step",
+    "task": "Find the current exchange rate of USD to EUR, then write a Python function that converts a given amount from USD to EUR and test it with $150.",
+    "expected_tools": ["search_web", "run_python"],
+    "difficulty": 3,
+    "grading_notes": "Must search for rate, then use it in code."
+  },
+  {
+    "task_id": "multi_023",
+    "category": "multi_step",
+    "task": "Write a Python script that generates 10 random integers between 1 and 100, saves them to a file called 'numbers.txt', then reads the file back and computes the mean and standard deviation.",
+    "expected_tools": ["run_python", "write_file", "read_file"],
+    "difficulty": 4,
+    "grading_notes": "Write → read → compute. Three-step pipeline."
+  },
+  {
+    "task_id": "multi_024",
+    "category": "multi_step",
+    "task": "Search the web for the top 3 programming languages by popularity in 2024, then write a Python script that prints a formatted comparison table of their key features.",
+    "expected_tools": ["search_web", "run_python"],
+    "difficulty": 4,
+    "grading_notes": "Research + synthesis + formatting. Should mention Python, JS, Java/C."
+  },
+  {
+    "task_id": "multi_025",
+    "category": "multi_step",
+    "task": "Search for the distance from Earth to Mars in km, then write Python code to calculate how long it would take light to travel that distance. Print the result in minutes and seconds.",
+    "expected_tools": ["search_web", "run_python"],
+    "difficulty": 3,
+    "grading_notes": "~225 million km. Light: ~12.5 minutes."
+  },
+  {
+    "task_id": "multi_026",
+    "category": "multi_step",
+    "task": "Write a Python function that generates a random password of 16 characters with uppercase, lowercase, digits, and symbols. Generate 5 passwords, save them to 'passwords.txt', then read the file and verify each meets the requirements.",
+    "expected_tools": ["run_python", "write_file", "read_file"],
+    "difficulty": 4,
+    "grading_notes": "Generate → write → read → validate. Four logical steps."
+  },
+  {
+    "task_id": "multi_027",
+    "category": "multi_step",
+    "task": "Search the web for three recent AI research papers, then write a Python script that creates a structured summary with title, authors, and one-sentence contribution for each.",
+    "expected_tools": ["search_web", "run_python"],
+    "difficulty": 4,
+    "grading_notes": "Research + structured output. Should produce parseable summary."
+  },
+  {
+    "task_id": "multi_028",
+    "category": "multi_step",
+    "task": "Write a Python class for a simple calculator that supports add, subtract, multiply, divide. Then write unit tests using assert statements. Run everything and report results.",
+    "expected_tools": ["run_python"],
+    "difficulty": 3,
+    "grading_notes": "Class + tests + execution in one flow."
+  },
+  {
+    "task_id": "multi_029",
+    "category": "multi_step",
+    "task": "Search for the formula for compound interest. Then write a Python script that calculates how much $10,000 would grow to in 10 years at 5% annual interest compounded monthly. Save the year-by-year breakdown to a file.",
+    "expected_tools": ["search_web", "run_python", "write_file"],
+    "difficulty": 4,
+    "grading_notes": "Search → compute → write. Should get ~$16,470."
+  },
+  {
+    "task_id": "multi_030",
+    "category": "multi_step",
+    "task": "Search the web for three sorting algorithms and their time complexities. Then implement all three in Python, benchmark them on a random list of 1000 integers, and report which is fastest.",
+    "expected_tools": ["search_web", "run_python"],
+    "difficulty": 5,
+    "grading_notes": "Research + implement + benchmark. Most complex multi-step task."
+  },
+  {
+    "task_id": "analysis_031",
+    "category": "analysis",
+    "task": "Calculate the body mass index (BMI) for a person who is 175cm tall and weighs 80kg. Classify the result according to WHO categories.",
+    "expected_tools": ["run_python"],
+    "difficulty": 2,
+    "grading_notes": "BMI = 80 / (1.75^2) ≈ 26.1. Overweight (25-29.9)."
+  },
+  {
+    "task_id": "analysis_032",
+    "category": "analysis",
+    "task": "Given the dataset [23, 45, 67, 12, 89, 34, 56, 78, 90, 11], compute the mean, median, mode, and standard deviation using Python.",
+    "expected_tools": ["run_python"],
+    "difficulty": 2,
+    "grading_notes": "Mean: 50.5. Median: 50.5. Mode: none (all unique). StdDev: ~28.7."
+  },
+  {
+    "task_id": "analysis_033",
+    "category": "analysis",
+    "task": "A store has items priced at $12.99, $24.50, $7.25, $45.00, and $18.75. Calculate the total, average price, and how much a 15% discount would save on the total.",
+    "expected_tools": ["run_python"],
+    "difficulty": 2,
+    "grading_notes": "Total: $108.49. Avg: $21.70. 15% off: $16.27 saved."
+  },
+  {
+    "task_id": "analysis_034",
+    "category": "analysis",
+    "task": "Search the web for the land area of the 5 largest countries. Then write Python code to calculate what percentage of Earth's total land area each represents.",
+    "expected_tools": ["search_web", "run_python"],
+    "difficulty": 3,
+    "grading_notes": "Russia, Canada, US/China, Brazil. Earth land ~148.9M km²."
+  },
+  {
+    "task_id": "analysis_035",
+    "category": "analysis",
+    "task": "Write a Python simulation: flip a coin 10,000 times and report the percentage of heads vs tails. Is it close to 50/50?",
+    "expected_tools": ["run_python"],
+    "difficulty": 2,
+    "grading_notes": "Should be very close to 50/50 with 10k flips."
+  },
+  {
+    "task_id": "analysis_036",
+    "category": "analysis",
+    "task": "Given monthly sales data [120, 135, 98, 145, 160, 132, 175, 190, 155, 200, 210, 185], identify the trend, best month, worst month, and quarter-over-quarter growth.",
+    "expected_tools": ["run_python"],
+    "difficulty": 3,
+    "grading_notes": "Upward trend. Best: month 11 (210). Worst: month 3 (98). Q4 > Q3 > Q2 > Q1."
+  },
+  {
+    "task_id": "analysis_037",
+    "category": "analysis",
+    "task": "Calculate the monthly payment on a $300,000 mortgage at 6.5% annual interest over 30 years using the standard amortization formula.",
+    "expected_tools": ["run_python"],
+    "difficulty": 3,
+    "grading_notes": "Monthly payment ≈ $1,896.20."
+  },
+  {
+    "task_id": "analysis_038",
+    "category": "analysis",
+    "task": "Write Python code to simulate rolling two dice 10,000 times. What is the probability of getting a sum of 7? Compare with the theoretical probability.",
+    "expected_tools": ["run_python"],
+    "difficulty": 3,
+    "grading_notes": "Theoretical: 6/36 = 16.67%. Simulation should be close."
+  },
+  {
+    "task_id": "analysis_039",
+    "category": "analysis",
+    "task": "Analyze this text for readability: 'The quick brown fox jumps over the lazy dog. This sentence contains every letter of the alphabet.' Count words, sentences, average word length, and estimate reading level.",
+    "expected_tools": ["run_python"],
+    "difficulty": 2,
+    "grading_notes": "19 words, 2 sentences. Avg word length ~4.2. Elementary reading level."
+  },
+  {
+    "task_id": "analysis_040",
+    "category": "analysis",
+    "task": "Search the web for current interest rates at three major US banks. Compare them in a table and recommend which offers the best savings account rate.",
+    "expected_tools": ["search_web", "run_python"],
+    "difficulty": 4,
+    "grading_notes": "Must search, extract rates, compare. Recommendation must be justified."
+  },
+  {
+    "task_id": "creative_041",
+    "category": "creative",
+    "task": "Write a haiku about programming, then write a Python script that counts the syllables in each line to verify the 5-7-5 pattern.",
+    "expected_tools": ["run_python"],
+    "difficulty": 3,
+    "grading_notes": "Must produce haiku AND verify syllables programmatically."
+  },
+  {
+    "task_id": "creative_042",
+    "category": "creative",
+    "task": "Create a short story outline (5 plot points) about a robot learning to cook. Then write Python code to randomly generate character names for the story.",
+    "expected_tools": ["run_python"],
+    "difficulty": 2,
+    "grading_notes": "Outline + code. Both should be present."
+  },
+  {
+    "task_id": "creative_043",
+    "category": "creative",
+    "task": "Write a Python script that generates a random maze as ASCII art (at least 10x10) and prints it.",
+    "expected_tools": ["run_python"],
+    "difficulty": 4,
+    "grading_notes": "Must produce valid maze with walls and path. DFS or random algorithm."
+  },
+  {
+    "task_id": "creative_044",
+    "category": "creative",
+    "task": "Search the web for five interesting facts about octopuses. Then write a creative paragraph incorporating all five facts into a narrative.",
+    "expected_tools": ["search_web"],
+    "difficulty": 3,
+    "grading_notes": "Research + creative synthesis. Should be engaging, not listicle."
+  },
+  {
+    "task_id": "creative_045",
+    "category": "creative",
+    "task": "Write a Python script that generates a random motivational quote by combining random subjects, verbs, and objects from predefined lists. Generate 5 quotes.",
+    "expected_tools": ["run_python"],
+    "difficulty": 2,
+    "grading_notes": "Should produce grammatically sensible quotes."
+  },
+  {
+    "task_id": "creative_046",
+    "category": "creative",
+    "task": "Create a Python text adventure game with 3 rooms. The player can move north/south/east and each room has a description. Print the game map and room descriptions.",
+    "expected_tools": ["run_python"],
+    "difficulty": 4,
+    "grading_notes": "Must have room graph, movement, and descriptions. Doesn't need to be interactive."
+  },
+  {
+    "task_id": "creative_047",
+    "category": "creative",
+    "task": "Search the web for the history of the Python programming language. Write a timeline of 5 key milestones from its creation to today.",
+    "expected_tools": ["search_web"],
+    "difficulty": 2,
+    "grading_notes": "Guido van Rossum, 1991, Python 2, Python 3, recent milestones."
+  },
+  {
+    "task_id": "creative_048",
+    "category": "creative",
+    "task": "Write a Python script that draws a Christmas tree using asterisks. The tree should be 10 rows tall with a trunk.",
+    "expected_tools": ["run_python"],
+    "difficulty": 2,
+    "grading_notes": "Should produce recognizable tree shape with centered asterisks."
+  },
+  {
+    "task_id": "creative_049",
+    "category": "creative",
+    "task": "Search the web for three famous unsolved problems in mathematics. For each, write a one-paragraph explanation that a high school student could understand.",
+    "expected_tools": ["search_web"],
+    "difficulty": 3,
+    "grading_notes": "P vs NP, Riemann Hypothesis, Goldbach Conjecture, etc. Clear explanations."
+  },
+  {
+    "task_id": "creative_050",
+    "category": "creative",
+    "task": "Write a Python script that simulates Conway's Game of Life on a 20x20 grid for 5 generations. Print each generation.",
+    "expected_tools": ["run_python"],
+    "difficulty": 5,
+    "grading_notes": "Must implement rules correctly. Each generation should show the grid."
+  }
+]
