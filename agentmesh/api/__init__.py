@@ -1,2 +1,6 @@
 # file: agentmesh/api/__init__.py
-"""FastAPI application and route handlers."""
+"""FastAPI API package."""
+
+from agentmesh.api.server import app
+
+__all__ = ["app"]
