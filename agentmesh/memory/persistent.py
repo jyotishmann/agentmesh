@@ -38,8 +38,8 @@ class PersistentMemory:
 
     def __init__(self, embedding_provider: Optional[EmbeddingProvider] = None):
         self._embedder = embedding_provider or EmbeddingProvider()
-        self._db_path = settings.database_path
-        self._memory_index_path = self._db_path.parent / "memory_index.bin"
+        self._db_path = Path(settings.db_path)
+        self._memory_index_path = Path(self._db_path).parent / "memory_index.bin"
 
         # Ensure data directory exists
         self._db_path.parent.mkdir(parents=True, exist_ok=True)

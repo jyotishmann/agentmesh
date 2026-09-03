@@ -47,7 +47,7 @@ def run_python(code: str) -> str:
             ["python", "-u", script_path],
             capture_output=True,
             text=True,
-            timeout=settings.code_execution_timeout,
+            timeout=settings.python_timeout,
             cwd=str(sandbox_dir),
         )
 
@@ -66,7 +66,7 @@ def run_python(code: str) -> str:
         return output
 
     except subprocess.TimeoutExpired:
-        return f"Error: Code execution timed out after {settings.code_execution_timeout} seconds."
+        return f"Error: Code execution timed out after {settings.python_timeout} seconds."
 
     except Exception as e:
         error_msg = f"Error: Code execution failed — {type(e).__name__}: {str(e)}"

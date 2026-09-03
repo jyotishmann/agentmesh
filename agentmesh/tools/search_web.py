@@ -3,7 +3,7 @@
 
 import logging
 
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 from agentmesh.config import settings
 from agentmesh.tools.registry import tool

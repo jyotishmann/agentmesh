@@ -21,7 +21,7 @@ class ModelManager:
     """
 
     def __init__(self):
-        self._main_provider = QwenModelProvider(settings.model_name)
+        self._main_provider = QwenModelProvider(settings.main_model_name)
         self._specialist_provider = QwenModelProvider(settings.specialist_model_name)
         self._embedding_provider = EmbeddingProvider(settings.embedding_model_name)
 

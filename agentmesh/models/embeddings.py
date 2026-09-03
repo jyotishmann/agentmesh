@@ -58,7 +58,7 @@ class EmbeddingProvider:
     def embedding_dim(self) -> int:
         """Return the dimensionality of the embedding vectors."""
         self._ensure_loaded()
-        return self._model.get_sentence_embedding_dimension()
+        return self._model.get_embedding_dimension()
 
     def is_loaded(self) -> bool:
         return self._model is not None
