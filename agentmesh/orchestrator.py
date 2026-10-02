@@ -37,43 +37,29 @@ class OrchestratorResult:
 
 
 class _LoopDetector:
-    """Detects repeated tool calls with identical arguments.
-
-    Tracks (tool_name, hash(args)) pairs. Returns True if a pair
-    has been seen before, indicating a potential infinite loop.
-    """
+    """Detects repeated tool calls with identical arguments."""
 
     def __init__(self):
-        self._seen: dict[str, str] = {}  # key -> previous result
+        self._seen: dict[str, str] = {}
 
     def check(self, tool_name: str, args: dict) -> tuple[bool, str]:
-        """Check if this tool+args combination has been called before.
-
-        Returns:
-            (is_duplicate, previous_result_or_empty)
-        """
         key = f"{tool_name}:{self._hash_args(args)}"
         if key in self._seen:
             return True, self._seen[key]
         return False, ""
 
     def record(self, tool_name: str, args: dict, result: str) -> None:
-        """Record a tool call for future duplicate detection."""
         key = f"{tool_name}:{self._hash_args(args)}"
         self._seen[key] = result[:500]
 
     @staticmethod
     def _hash_args(args: dict) -> str:
-        """Produce a stable hash of the arguments dict."""
         serialised = json.dumps(args, sort_keys=True, default=str)
         return hashlib.sha256(serialised.encode()).hexdigest()[:16]
 
-class Orchestrator:
-    """Central agent loop — coordinates planning, execution, and evaluation.
 
-    The run() method executes a full task lifecycle:
-    plan → specialist execution → critic evaluation → revision if needed.
-    """
+class Orchestrator:
+    """Central agent loop: plan -> specialists -> critic -> revision."""
 
     def __init__(
         self,
@@ -85,7 +71,6 @@ class Orchestrator:
         self.tool_registry = tool_registry or create_default_registry()
         self.memory = memory or PersistentMemory()
 
-        # Create agents
         self.planner = PlannerAgent(self.model_manager)
         self.critic = CriticAgent(self.model_manager)
 
@@ -95,42 +80,64 @@ class Orchestrator:
             "analyst": AnalystAgent(self.model_manager, self.tool_registry),
         }
 
-        # Session management
         self._sessions: dict[str, ConversationBuffer] = {}
 
-    def run(
-        self,
-        task: str,
-        session_id: str = "",
-    ) -> OrchestratorResult:
-        """Execute a full task lifecycle.
+    # ── Helpers ─────────────────────────────────────────────────
 
-        Args:
-            task: The user's natural-language task.
-            session_id: Optional session ID for conversation continuity.
+    def _get_session(self, session_id: str) -> ConversationBuffer:
+        """Get or create a conversation buffer for a session."""
+        if session_id not in self._sessions:
+            self._sessions[session_id] = ConversationBuffer()
+        return self._sessions[session_id]
 
-        Returns:
-            OrchestratorResult with response, task_id, and trajectory.
-        """
+    @staticmethod
+    def _log_event(
+        events: list[dict],
+        step: int,
+        agent_name: str,
+        action_type: str,
+        tool_name: str = "",
+        tool_input: str = "",
+        tool_output: str = "",
+        tokens_in: int = 0,
+        tokens_out: int = 0,
+        latency_ms: float = 0.0,
+        metadata: dict | None = None,
+    ) -> None:
+        """Append a structured event to the trajectory list."""
+        events.append({
+            "step_number": step,
+            "agent_name": agent_name,
+            "action_type": action_type,
+            "tool_name": tool_name,
+            "tool_input": tool_input[:1000],
+            "tool_output": tool_output[:1000],
+            "tokens_in": tokens_in,
+            "tokens_out": tokens_out,
+            "latency_ms": round(latency_ms, 2),
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "metadata": json.dumps(metadata or {}),
+        })
+
+    # ── Main loop ───────────────────────────────────────────────
+
+    def run(self, task: str, session_id: str = "") -> OrchestratorResult:
+        """Execute a full task lifecycle."""
         task_id = f"task_{uuid4().hex[:12]}"
         session_id = session_id or f"session_{uuid4().hex[:8]}"
         events: list[dict] = []
         step = 0
         total_tool_calls = 0
 
-        # Reset per-task token tracking
         self.model_manager.reset_token_stats()
 
-        # Get conversation context
         buffer = self._get_session(session_id)
         buffer.add("user", task)
 
-        # Load long-term memory context
         memory_context = self.memory.get_memory_context(task)
-
         logger.info(f"[{task_id}] Starting task: {task[:80]}...")
 
-        # ── Phase 1: Planning ──────────────────────────────────────
+        # ── Phase 1: Planning ───────────────────────────────────
         plan_response = self.planner.run(task, memory_context)
         step += 1
         self._log_event(
@@ -148,7 +155,7 @@ class Orchestrator:
 
         logger.info(f"[{task_id}] Plan: {len(sub_tasks)} sub-tasks")
 
-        # ── Phase 2: Specialist Execution ──────────────────────────
+        # ── Phase 2: Specialist execution ───────────────────────
         loop_detector = _LoopDetector()
         sub_task_outputs: list[str] = []
         hit_limit = False
@@ -162,26 +169,20 @@ class Orchestrator:
 
             agent = self.specialists.get(specialist_name)
             if agent is None:
-                logger.warning(f"Unknown specialist '{specialist_name}', falling back to research")
+                logger.warning(f"Unknown specialist '{specialist_name}', using research")
                 agent = self.specialists["research"]
 
             logger.info(f"[{task_id}] Sub-task {i+1}: {specialist_name} — {description[:60]}")
 
-            # Run the specialist
             agent_response = agent.run(description)
             step += 1
 
-            # Log each tool call with loop detection
             for tc in agent_response.tool_calls:
                 total_tool_calls += 1
 
-                # Loop detection
                 is_dup, prev_result = loop_detector.check(tc["tool"], tc["args"])
                 if is_dup:
-                    logger.warning(
-                        f"[{task_id}] Loop detected: {tc['tool']}({tc['args']}) "
-                        f"called with same args before."
-                    )
+                    logger.warning(f"[{task_id}] Loop detected: {tc['tool']}({tc['args']})")
                     step += 1
                     self._log_event(
                         events, step, agent.name, "loop_detected",
@@ -200,13 +201,11 @@ class Orchestrator:
                     tool_output=tc.get("result", ""),
                 )
 
-                # Check total tool call limit
                 if total_tool_calls >= settings.max_total_tool_calls:
                     logger.warning(f"[{task_id}] Total tool call limit reached.")
                     hit_limit = True
                     break
 
-            # Log the specialist's output
             step += 1
             self._log_event(
                 events, step, agent.name, "agent_output",
@@ -222,7 +221,7 @@ class Orchestrator:
 
         assembled_output = "\n\n---\n\n".join(sub_task_outputs)
 
-        # ── Phase 3: Critic Evaluation ─────────────────────────────
+        # ── Phase 3: Critic + revision ──────────────────────────
         critic_verdict = {"pass": True, "confidence": 1.0, "feedback": ""}
 
         if not hit_limit and assembled_output.strip():
@@ -244,21 +243,13 @@ class Orchestrator:
                 )
 
                 if critic_verdict.get("pass", True):
-                    logger.info(
-                        f"[{task_id}] Critic passed (confidence: "
-                        f"{critic_verdict.get('confidence', '?')})"
-                    )
+                    logger.info(f"[{task_id}] Critic passed ({critic_verdict.get('confidence', '?')})")
                     break
 
-                # Critic rejected — attempt revision
                 if revision_cycle < settings.max_revision_cycles:
                     feedback = critic_verdict.get("feedback", "Please improve the output.")
-                    logger.info(
-                        f"[{task_id}] Critic rejected (cycle {revision_cycle + 1}). "
-                        f"Feedback: {feedback[:80]}"
-                    )
+                    logger.info(f"[{task_id}] Critic rejected (cycle {revision_cycle + 1}): {feedback[:80]}")
 
-                    # Re-run the last specialist with critic feedback
                     last_specialist = sub_tasks[-1].get("specialist", "research")
                     agent = self.specialists.get(last_specialist, self.specialists["research"])
 
@@ -280,7 +271,6 @@ class Orchestrator:
                         latency_ms=revision_response.total_latency_ms,
                     )
 
-                    # Replace the assembled output with the revised version
                     assembled_output = revision_response.output
 
                     for tc in revision_response.tool_calls:
@@ -293,33 +283,25 @@ class Orchestrator:
                             tool_output=tc.get("result", ""),
                         )
                 else:
-                    logger.warning(f"[{task_id}] Max revision cycles reached. Returning current output.")
+                    logger.warning(f"[{task_id}] Max revision cycles reached.")
 
-        # ── Phase 4: Finalisation ──────────────────────────────────
+        # ── Phase 4: Finalisation ───────────────────────────────
         step += 1
-        self._log_event(
-            events, step, "Orchestrator", "final",
-            tool_output=assembled_output[:500],
-        )
+        self._log_event(events, step, "Orchestrator", "final",
+                        tool_output=assembled_output[:500])
 
-        # Store in long-term memory
         try:
-            task_summary = task[:200]
-            result_summary = assembled_output[:200]
-            self.memory.store(task_summary, result_summary)
+            self.memory.store(task[:200], assembled_output[:200])
         except Exception as e:
             logger.error(f"Failed to store memory: {e}")
 
-        # Update conversation buffer
         buffer.add("assistant", assembled_output)
 
-        # Gather token stats
         token_stats = self.model_manager.get_token_stats()
-
         completed = not hit_limit and critic_verdict.get("pass", True)
 
         logger.info(
-            f"[{task_id}] Task complete. Completed: {completed}. "
+            f"[{task_id}] Done. Completed: {completed}. "
             f"Tool calls: {total_tool_calls}. Tokens: {token_stats['total_tokens']}"
         )
 
@@ -327,9 +309,6 @@ class Orchestrator:
             response=assembled_output,
             task_id=task_id,
             completed=completed,
-            token_summary={
-                **token_stats,
-                "total_tool_calls": total_tool_calls,
-            },
+            token_summary={**token_stats, "total_tool_calls": total_tool_calls},
             trajectory_events=events,
         )

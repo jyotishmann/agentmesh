@@ -12,67 +12,41 @@ class Settings(BaseSettings):
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
-    # ── Model Configuration ──────────────────────────────────────────
-    main_model_name: str = Field(
-        default="Qwen/Qwen2.5-3B-Instruct",
-        description="HuggingFace model ID for Planner and Critic agents",
-    )
-    specialist_model_name: str = Field(
-        default="Qwen/Qwen2.5-1.5B-Instruct",
-        description="HuggingFace model ID for Specialist agents",
-    )
-    embedding_model_name: str = Field(
-        default="BAAI/bge-small-en-v1.5",
-        description="HuggingFace model ID for embeddings",
-    )
+    # ── Model Configuration ─────────────────────────────────────
+    main_model_name: str = Field(default="Qwen/Qwen2.5-3B-Instruct")
+    specialist_model_name: str = Field(default="Qwen/Qwen2.5-1.5B-Instruct")
+    embedding_model_name: str = Field(default="BAAI/bge-small-en-v1.5")
 
     # ── Generation Parameters ───────────────────────────────────
-    temperature: float = Field(default=0.7, description="Sampling temperature")
-    max_new_tokens: int = Field(default=1024, description="Max tokens to generate")
-    top_p: float = Field(default=0.9, description="Nucleus sampling threshold")
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    max_new_tokens: int = Field(default=1024, ge=1, le=4096)
+    top_p: float = Field(default=0.9, ge=0.0, le=1.0)
 
     # ── Agent Parameters ────────────────────────────────────────
-    max_tool_calls_per_agent: int = Field(
-        default=5, description="Max tool calls per specialist per sub-task"
-    )
-    max_total_tool_calls: int = Field(
-        default=20, description="Hard cap on total tool calls per task"
-    )
-    max_revision_cycles: int = Field(
-        default=2, description="Max critic-specialist revision loops"
-    )
-    conversation_buffer_size: int = Field(
-        default=20, description="Max messages in conversation buffer"
-    )
+    max_tool_calls_per_agent: int = Field(default=5, ge=1, le=20)
+    max_total_tool_calls: int = Field(default=20, ge=1, le=50)
+    max_revision_cycles: int = Field(default=2, ge=0, le=5)
+    conversation_buffer_size: int = Field(default=20, ge=1, le=100)
 
     # ── Tool Configuration ──────────────────────────────────────
-    sandbox_dir: str = Field(
-        default="data/sandbox", description="Directory for file I/O tool"
-    )
-    knowledge_base_dir: str = Field(
-        default="data/knowledge_base", description="Directory for KB documents"
-    )
-    python_timeout: int = Field(
-        default=30, description="Timeout in seconds for Python execution"
-    )
+    workspace_root: Path = Field(default=Path("data"))
+    sandbox_dir: Path = Field(default=Path("data/sandbox"))
+    python_timeout: int = Field(default=30, ge=1, le=120)
+    file_read_max_chars: int = Field(default=10000, ge=100, le=100000)
+
+    # ── Knowledge Base ──────────────────────────────────────────
+    knowledge_base_dir: Path = Field(default=Path("data/knowledge_base"))
+    knowledge_base_top_k: int = Field(default=5, ge=1, le=20)
 
     # ── Storage Paths ───────────────────────────────────────────
-    db_path: str = Field(
-        default="data/agentmesh.db", description="SQLite database path"
-    )
-    faiss_index_path: str = Field(
-        default="data/memory.faiss", description="FAISS index path"
-    )
-    kb_index_path: str = Field(
-        default="data/kb.faiss", description="Knowledge base FAISS index path"
-    )
+    db_path: Path = Field(default=Path("data/agentmesh.db"))
+    faiss_index_path: Path = Field(default=Path("data/kb.faiss"))
+    kb_index_path: Path = Field(default=Path("data/kb.faiss"))
 
     # ── Server ──────────────────────────────────────────────────
     server_host: str = Field(default="0.0.0.0")
-    server_port: int = Field(default=8000)
-    device: str = Field(
-        default="auto", description="Device: 'auto', 'cuda', or 'cpu'"
-    )
+    server_port: int = Field(default=8000, ge=1, le=65535)
+    device: str = Field(default="auto")
 
 
 # Singleton instance — every module imports this
