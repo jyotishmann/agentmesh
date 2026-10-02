@@ -81,6 +81,38 @@ class BaseAgent:
 
     @staticmethod
     def _parse_tool_call(text: str) -> Optional[dict]:
+        """Extract the first tool call from model output.
+
+        Accepts tagged (<tool_call>...</tool_call>) or bare JSON, and both
+        key conventions: {"tool", "args"} or Qwen-native {"name", "arguments"}.
+        Always returns the normalised form {"tool": str, "args": dict}.
+        """
+        tagged = re.search(r"<tool_call>\s*(.*?)\s*(?:</tool_call>|$)", text, re.DOTALL)
+        search_space = tagged.group(1) if tagged else text
+
+        decoder = json.JSONDecoder()
+        for match in re.finditer(r"\{", search_space):
+            try:
+                obj, _ = decoder.raw_decode(search_space, match.start())
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+
+            name = obj.get("tool") or obj.get("name")
+            args = obj.get("args", obj.get("arguments"))
+            if isinstance(args, str):  # some models emit arguments as a JSON string
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    continue
+            if isinstance(name, str) and isinstance(args, dict):
+                return {"tool": name, "args": args}
+
+        return None
+
+    @staticmethod
+    def _parse_tool_call(text: str) -> Optional[dict]:
         """Extract a tool call from the model's output.
 
         Looks for: <tool_call>{"tool": "name", "args": {...}}</tool_call>
@@ -152,6 +184,25 @@ class BaseAgent:
             tool_call = self._parse_tool_call(response.text)
 
             if tool_call is None:
+                # Model wrote code but didn't execute it: nudge once.
+                if (
+                    not nudged
+                    and not tool_calls
+                    and "```python" in response.text
+                    and self.tool_registry is not None
+                    and "run_python" in self.tool_registry.list_tools()
+                ):
+                    nudged = True
+                    conversation.append({"role": "assistant", "content": response.text})
+                    conversation.append({
+                        "role": "user",
+                        "content": (
+                            "You wrote code but did not execute it. Call run_python "
+                            "now with that code, then report the actual output."
+                        ),
+                    })
+                    continue
+
                 # No tool call — model is done reasoning
                 return AgentResponse(
                     output=response.text,
@@ -160,6 +211,7 @@ class BaseAgent:
                     tokens_out=total_tokens_out,
                     total_latency_ms=round(total_latency, 2),
                 )
+
 
             # Check tool call limit
             if step >= self._max_tool_calls:

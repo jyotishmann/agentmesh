@@ -153,6 +153,10 @@ class Orchestrator:
         except json.JSONDecodeError:
             sub_tasks = [{"description": task, "specialist": "research", "required_tools": []}]
 
+        if not isinstance(sub_tasks, list) or not sub_tasks:
+            logger.warning(f"[{task_id}] Planner returned an empty plan. Using fallback.")
+            sub_tasks = [{"description": task, "specialist": "research", "required_tools": []}]
+
         logger.info(f"[{task_id}] Plan: {len(sub_tasks)} sub-tasks")
 
         # ── Phase 2: Specialist execution ───────────────────────
@@ -258,7 +262,8 @@ class Orchestrator:
                         f"Original task: {task}\n"
                         f"Critic feedback: {feedback}\n"
                         f"Previous output:\n{assembled_output}\n\n"
-                        f"Please revise and improve the output."
+                        f"Respond with only the improved final answer. "
+                        f"Do not mention the critic, the revision, or apologise."
                     )
 
                     revision_response = agent.run(revision_task)
