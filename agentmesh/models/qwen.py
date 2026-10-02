@@ -19,7 +19,7 @@ class QwenModelProvider(BaseModelProvider):
     """
 
     def __init__(self, model_name: Optional[str] = None):
-        self._model_name = model_name or settings.model_name
+        self._model_name = model_name or settings.main_model_name
         self._model = None
         self._tokenizer = None
         self._device = settings.device
