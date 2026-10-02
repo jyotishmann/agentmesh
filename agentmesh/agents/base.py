@@ -145,7 +145,6 @@ class BaseAgent:
             logger.warning(f"Failed to parse tool call JSON: {e}\nRaw: {json_str}")
             return None
 
-
     def _run_with_tools(
         self,
         messages: list[dict],
@@ -153,25 +152,17 @@ class BaseAgent:
     ) -> AgentResponse:
         """Execute the agent's tool-use loop.
 
-        Repeatedly: generate → parse tool call → execute tool → inject
-        result → generate again. Stops when the model produces output
-        without a tool call, or the tool call limit is reached.
-
-        Args:
-            messages: Initial message list (including system prompt).
-            context_for_log: Description for logging.
-
-        Returns:
-            AgentResponse with output, tool call history, and token stats.
+        generate -> parse tool call -> execute -> inject result -> repeat.
+        Stops when the model answers without a tool call, or the limit is hit.
         """
-        tool_calls = []
+        tool_calls: list[dict] = []
         total_tokens_in = 0
         total_tokens_out = 0
         total_latency = 0.0
         conversation = list(messages)
+        nudged = False  # one-time reminder when code is written but not executed
 
         for step in range(self._max_tool_calls + 1):
-            # Generate model response
             response: ModelResponse = self.model_manager.generate(
                 conversation,
                 use_specialist=self.use_specialist,
@@ -180,7 +171,6 @@ class BaseAgent:
             total_tokens_out += response.tokens_out
             total_latency += response.latency_ms
 
-            # Check for tool call
             tool_call = self._parse_tool_call(response.text)
 
             if tool_call is None:
@@ -212,12 +202,8 @@ class BaseAgent:
                     total_latency_ms=round(total_latency, 2),
                 )
 
-
-            # Check tool call limit
             if step >= self._max_tool_calls:
-                logger.warning(
-                    f"{self.name}: Hit tool call limit ({self._max_tool_calls})"
-                )
+                logger.warning(f"{self.name}: Hit tool call limit ({self._max_tool_calls})")
                 return AgentResponse(
                     output=response.text,
                     tool_calls=tool_calls,
@@ -228,40 +214,28 @@ class BaseAgent:
                     error=f"Tool call limit ({self._max_tool_calls}) reached.",
                 )
 
-            # Dispatch the tool call
             tool_name = tool_call["tool"]
             tool_args = tool_call["args"]
 
             if self.tool_registry is None:
-                tool_result = f"Error: No tool registry available."
+                tool_result = "Error: No tool registry available."
             else:
                 tool_result = self.tool_registry.call(tool_name, tool_args)
 
-            # Record the tool call
             tool_calls.append({
                 "tool": tool_name,
                 "args": tool_args,
-                "result": tool_result[:500],  # truncate for logging
+                "result": tool_result[:500],
             })
+            logger.info(f"{self.name}: Called {tool_name}({tool_args}) → {tool_result[:100]}...")
 
-            logger.info(
-                f"{self.name}: Called {tool_name}({tool_args}) → "
-                f"{tool_result[:100]}..."
-            )
-
-            # Inject model output and tool result into the conversation
-            conversation.append({
-                "role": "assistant",
-                "content": response.text,
-            })
+            conversation.append({"role": "assistant", "content": response.text})
             conversation.append({
                 "role": "user",
-                "content": (
-                    f"[Tool Result: {tool_name}]\n{tool_result}"
-                ),
+                "content": f"[Tool Result: {tool_name}]\n{tool_result}",
             })
 
-        # Should not reach here, but safety fallback
+        # Safety fallback — loop exhausted (e.g. nudge consumed the last step)
         return AgentResponse(
             output="Agent loop ended without producing a final response.",
             tool_calls=tool_calls,
@@ -270,3 +244,4 @@ class BaseAgent:
             total_latency_ms=round(total_latency, 2),
             completed=False,
         )
+
