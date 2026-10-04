@@ -99,6 +99,18 @@ class ToolRegistry:
         """Return the ToolDef for a given tool name, or None."""
         return self._tools.get(name)
 
+    def subset(self, names: list[str]) -> "ToolRegistry":
+        """Return a new registry containing only the named tools.
+
+        Used to give each specialist only the tools its role needs. Calls to
+        any other tool fail with the registry's normal 'Unknown tool' error.
+        """
+        restricted = ToolRegistry()
+        for tool_name in names:
+            if tool_name in self._tools:
+                restricted._tools[tool_name] = self._tools[tool_name]
+        return restricted    
+
     def get_tool_descriptions(self) -> str:
         """Generate a formatted tool description block for system prompts.
 

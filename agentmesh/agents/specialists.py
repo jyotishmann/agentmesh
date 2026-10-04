@@ -86,6 +86,7 @@ class CoderAgent(BaseAgent):
             "- If code fails, read the error and fix it.\n"
             "- Use print() in your code to produce visible output.\n"
             "- Only use the tools listed below.\n\n"
+            "- Your final answer must state the actual output returned by run_python.\n"
             f"{tool_desc}"
         )
 

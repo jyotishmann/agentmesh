@@ -14,6 +14,9 @@ from agentmesh.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
+# Matches ```python ... ``` or ```py ... ``` fenced blocks
+_CODE_BLOCK_RE = re.compile(r"```(?:python|py)[ \t]*\n(.*?)```", re.DOTALL)
+
 
 @dataclass
 class AgentResponse:
@@ -94,18 +97,36 @@ class BaseAgent:
 
         return None
 
+    @staticmethod
+    def _extract_code_block(text: str) -> Optional[str]:
+        """Return the last ```python fenced block in the text, if any."""
+        blocks = _CODE_BLOCK_RE.findall(text)
+        return blocks[-1].strip() if blocks else None
+
+    def _can_run_python(self) -> bool:
+        return (
+            self.tool_registry is not None
+            and "run_python" in self.tool_registry.list_tools()
+        )
+
     def _run_with_tools(
         self,
         messages: list[dict],
         context_for_log: str = "",
     ) -> AgentResponse:
-        """generate -> parse tool call -> execute -> inject result -> repeat."""
+        """generate -> parse tool call -> execute -> inject result -> repeat.
+
+        If the model writes a ```python block instead of a formal tool call,
+        and this agent may use run_python, the block is executed implicitly.
+        Identical code is never executed twice, which ends the loop when the
+        model's final answer repeats the code alongside its output.
+        """
         tool_calls: list[dict] = []
         total_tokens_in = 0
         total_tokens_out = 0
         total_latency = 0.0
         conversation = list(messages)
-        nudged = False  # one-time reminder when code is written but not executed
+        executed_code: set[str] = set()
 
         for step in range(self._max_tool_calls + 1):
             response: ModelResponse = self.model_manager.generate(
@@ -117,26 +138,17 @@ class BaseAgent:
             total_latency += response.latency_ms
 
             tool_call = self._parse_tool_call(response.text)
+            implicit = False
+
+            # Code-as-action fallback: run a fenced code block the model didn't wrap
+            if tool_call is None and self._can_run_python():
+                code = self._extract_code_block(response.text)
+                if code and code not in executed_code:
+                    tool_call = {"tool": "run_python", "args": {"code": code}}
+                    implicit = True
 
             if tool_call is None:
-                if (
-                    not nudged
-                    and not tool_calls
-                    and "```python" in response.text
-                    and self.tool_registry is not None
-                    and "run_python" in self.tool_registry.list_tools()
-                ):
-                    nudged = True
-                    conversation.append({"role": "assistant", "content": response.text})
-                    conversation.append({
-                        "role": "user",
-                        "content": (
-                            "You wrote code but did not execute it. Call run_python "
-                            "now with that code, then report the actual output."
-                        ),
-                    })
-                    continue
-
+                # No tool call — model is done reasoning
                 return AgentResponse(
                     output=response.text,
                     tool_calls=tool_calls,
@@ -160,13 +172,22 @@ class BaseAgent:
             tool_name = tool_call["tool"]
             tool_args = tool_call["args"]
 
+            if tool_name == "run_python":
+                executed_code.add(str(tool_args.get("code", "")).strip())
+
             if self.tool_registry is None:
                 tool_result = "Error: No tool registry available."
             else:
                 tool_result = self.tool_registry.call(tool_name, tool_args)
 
-            tool_calls.append({"tool": tool_name, "args": tool_args, "result": tool_result[:500]})
-            logger.info(f"{self.name}: Called {tool_name}({tool_args}) → {tool_result[:100]}...")
+            tool_calls.append({
+                "tool": tool_name,
+                "args": tool_args,
+                "result": tool_result[:500],
+                "implicit": implicit,
+            })
+            verb = "Implicitly ran" if implicit else "Called"
+            logger.info(f"{self.name}: {verb} {tool_name} → {tool_result[:100]}...")
 
             conversation.append({"role": "assistant", "content": response.text})
             conversation.append({

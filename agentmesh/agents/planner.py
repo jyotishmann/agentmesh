@@ -59,6 +59,7 @@ class PlannerAgent(BaseAgent):
             "- Each sub-task should be self-contained.\n"
             "- Simple tasks need only 1 sub-task.\n"
             "- Never create more sub-tasks than necessary.\n"
+            "- Questions about facts, figures, or current events go to research.\n"
         )
 
     def run(

@@ -74,10 +74,18 @@ class Orchestrator:
         self.planner = PlannerAgent(self.model_manager)
         self.critic = CriticAgent(self.model_manager)
 
+        # Least privilege: each specialist sees and can call only its own tools
+        reg = self.tool_registry
         self.specialists = {
-            "research": ResearchAgent(self.model_manager, self.tool_registry),
-            "coder": CoderAgent(self.model_manager, self.tool_registry),
-            "analyst": AnalystAgent(self.model_manager, self.tool_registry),
+            "research": ResearchAgent(
+                self.model_manager, reg.subset(["search_web", "query_knowledge_base"])
+            ),
+            "coder": CoderAgent(
+                self.model_manager, reg.subset(["run_python", "read_file", "write_file"])
+            ),
+            "analyst": AnalystAgent(
+                self.model_manager, reg.subset(["read_file", "query_knowledge_base", "run_python"])
+            ),
         }
 
         self._sessions: dict[str, ConversationBuffer] = {}
@@ -203,6 +211,7 @@ class Orchestrator:
                     tool_name=tc["tool"],
                     tool_input=json.dumps(tc["args"]),
                     tool_output=tc.get("result", ""),
+                    metadata={"implicit": tc.get("implicit", False)},
                 )
 
                 if total_tool_calls >= settings.max_total_tool_calls:
