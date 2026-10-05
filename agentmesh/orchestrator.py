@@ -58,6 +58,19 @@ class _LoopDetector:
         return hashlib.sha256(serialised.encode()).hexdigest()[:16]
 
 
+_CODE_HINTS = ("code", "python", "script", "function", "implement", "program", "class")
+_COMPUTE_HINTS = ("calculate", "compute", "simulate", "mean", "median", "average", "statistic")
+
+
+def _fallback_specialist(task: str) -> str:
+    """Pick a specialist when the planner fails. Keyword-based, deliberately simple."""
+    lowered = task.lower()
+    if any(hint in lowered for hint in _CODE_HINTS):
+        return "coder"
+    if any(hint in lowered for hint in _COMPUTE_HINTS):
+        return "analyst"
+    return "research"
+
 class Orchestrator:
     """Central agent loop: plan -> specialists -> critic -> revision."""
 
@@ -159,11 +172,12 @@ class Orchestrator:
         try:
             sub_tasks = json.loads(plan_response.output)
         except json.JSONDecodeError:
-            sub_tasks = [{"description": task, "specialist": "research", "required_tools": []}]
+            sub_tasks = []
 
         if not isinstance(sub_tasks, list) or not sub_tasks:
-            logger.warning(f"[{task_id}] Planner returned an empty plan. Using fallback.")
-            sub_tasks = [{"description": task, "specialist": "research", "required_tools": []}]
+            specialist = _fallback_specialist(task)
+            logger.warning(f"[{task_id}] Planner returned an empty plan. Falling back to {specialist}.")
+            sub_tasks = [{"description": task, "specialist": specialist, "required_tools": []}]
 
         logger.info(f"[{task_id}] Plan: {len(sub_tasks)} sub-tasks")
 
