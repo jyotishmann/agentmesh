@@ -103,6 +103,34 @@ class BaseAgent:
         blocks = _CODE_BLOCK_RE.findall(text)
         return blocks[-1].strip() if blocks else None
 
+    @staticmethod
+    def _ground_in_execution(text: str, exec_output: str) -> str:
+        """Append real sandbox output to an answer that doesn't report it.
+
+        Small models often finish by repeating their code instead of stating
+        what it printed. If the most informative of the first few output
+        lines isn't already in the answer, the genuine output is appended.
+        The appended text comes from the sandbox, so it cannot be invented.
+        """
+        if not exec_output or not exec_output.strip():
+            return text
+
+        body = exec_output.strip()
+        if body.startswith("STDOUT:"):
+            body = body[len("STDOUT:"):].strip()
+
+        lines = [line.strip() for line in body.splitlines() if line.strip()]
+        if not lines:
+            return text
+
+        # Short lines like "2" appear in almost any text, so only trust a
+        # line of 3+ characters as evidence that the answer reports output.
+        key_line = max(lines[:5], key=len)
+        if len(key_line) >= 3 and key_line in text:
+            return text
+
+        return f"{text.rstrip()}\n\n**Execution output:**\n```\n{body[:1500]}\n```"
+
     def _can_run_python(self) -> bool:
         return (
             self.tool_registry is not None
@@ -127,6 +155,7 @@ class BaseAgent:
         total_latency = 0.0
         conversation = list(messages)
         executed_code: set[str] = set()
+        last_exec_output = ""
 
         for step in range(self._max_tool_calls + 1):
             response: ModelResponse = self.model_manager.generate(
@@ -150,7 +179,7 @@ class BaseAgent:
             if tool_call is None:
                 # No tool call — model is done reasoning
                 return AgentResponse(
-                    output=response.text,
+                    output=self._ground_in_execution(response.text, last_exec_output),
                     tool_calls=tool_calls,
                     tokens_in=total_tokens_in,
                     tokens_out=total_tokens_out,
@@ -160,7 +189,7 @@ class BaseAgent:
             if step >= self._max_tool_calls:
                 logger.warning(f"{self.name}: Hit tool call limit ({self._max_tool_calls})")
                 return AgentResponse(
-                    output=response.text,
+                    output=self._ground_in_execution(response.text, last_exec_output),
                     tool_calls=tool_calls,
                     tokens_in=total_tokens_in,
                     tokens_out=total_tokens_out,
@@ -180,6 +209,9 @@ class BaseAgent:
             else:
                 tool_result = self.tool_registry.call(tool_name, tool_args)
 
+            if tool_name == "run_python":
+                last_exec_output = tool_result
+
             tool_calls.append({
                 "tool": tool_name,
                 "args": tool_args,
@@ -196,7 +228,9 @@ class BaseAgent:
             })
 
         return AgentResponse(
-            output="Agent loop ended without producing a final response.",
+            output=self._ground_in_execution(
+                "Agent loop ended without producing a final response.", last_exec_output
+            ),
             tool_calls=tool_calls,
             tokens_in=total_tokens_in,
             tokens_out=total_tokens_out,
