@@ -10,7 +10,6 @@ from typing import Optional
 from uuid import uuid4
 
 from agentmesh.agents import (
-    AgentResponse,
     AnalystAgent,
     CoderAgent,
     CriticAgent,
@@ -70,6 +69,7 @@ def _fallback_specialist(task: str) -> str:
     if any(hint in lowered for hint in _COMPUTE_HINTS):
         return "analyst"
     return "research"
+
 
 class Orchestrator:
     """Central agent loop: plan -> specialists -> critic -> revision."""
@@ -183,7 +183,8 @@ class Orchestrator:
 
         # ── Phase 2: Specialist execution ───────────────────────
         loop_detector = _LoopDetector()
-        sub_task_outputs: list[str] = []
+        labelled_outputs: list[str] = []  # "[ROLE: step]\noutput" — context for later steps
+        raw_outputs: list[str] = []       # bare outputs — used for single-step answers
         hit_limit = False
 
         for i, sub_task in enumerate(sub_tasks):
@@ -196,12 +197,18 @@ class Orchestrator:
             agent = self.specialists.get(specialist_name)
             if agent is None:
                 logger.warning(f"Unknown specialist '{specialist_name}', using research")
+                specialist_name = "research"
                 agent = self.specialists["research"]
 
             logger.info(f"[{task_id}] Sub-task {i+1}: {specialist_name} — {description[:60]}")
 
-            agent_response = agent.run(description)
-            step += 1
+            # Give each specialist the overall goal and what earlier steps found
+            instruction = f"Overall task: {task}\nYour step: {description}"
+            if labelled_outputs:
+                earlier = "\n\n".join(labelled_outputs)[-3000:]  # cap context cost
+                instruction += f"\n\nResults from earlier steps:\n{earlier}"
+
+            agent_response = agent.run(instruction)
 
             for tc in agent_response.tool_calls:
                 total_tool_calls += 1
@@ -242,11 +249,16 @@ class Orchestrator:
                 latency_ms=agent_response.total_latency_ms,
             )
 
-            sub_task_outputs.append(
+            raw_outputs.append(agent_response.output)
+            labelled_outputs.append(
                 f"[{specialist_name.upper()}: {description}]\n{agent_response.output}"
             )
 
-        assembled_output = "\n\n---\n\n".join(sub_task_outputs)
+        # Section headers only help when several specialists contributed
+        if len(raw_outputs) == 1:
+            assembled_output = raw_outputs[0]
+        else:
+            assembled_output = "\n\n---\n\n".join(labelled_outputs)
 
         # ── Phase 3: Critic + revision ──────────────────────────
         critic_verdict = {"pass": True, "confidence": 1.0, "feedback": ""}
@@ -281,12 +293,12 @@ class Orchestrator:
                     agent = self.specialists.get(last_specialist, self.specialists["research"])
 
                     revision_task = (
-                        f"The previous output was rejected by the quality critic.\n"
-                        f"Original task: {task}\n"
-                        f"Critic feedback: {feedback}\n"
-                        f"Previous output:\n{assembled_output}\n\n"
-                        f"Respond with only the improved final answer. "
-                        f"Do not mention the critic, the revision, or apologise."
+                        f"Task: {task}\n"
+                        f"Reviewer feedback: {feedback}\n"
+                        f"Previous answer:\n{assembled_output}\n\n"
+                        f"Write an improved final answer to the task. "
+                        f"Respond with only the improved answer. "
+                        f"Do not mention the reviewer, the revision, or apologise."
                     )
 
                     revision_response = agent.run(revision_task)
@@ -309,6 +321,7 @@ class Orchestrator:
                             tool_name=tc["tool"],
                             tool_input=json.dumps(tc["args"]),
                             tool_output=tc.get("result", ""),
+                            metadata={"implicit": tc.get("implicit", False)},
                         )
                 else:
                     logger.warning(f"[{task_id}] Max revision cycles reached.")
