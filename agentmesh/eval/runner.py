@@ -1,9 +1,19 @@
 # file: agentmesh/eval/runner.py
-"""Eval Runner — executes tasks through the orchestrator and computes metrics."""
+"""Eval Runner — executes tasks through the orchestrator and computes metrics.
+
+Reliability guarantees (PR 14):
+  * Deterministic: greedy decoding during evals, so reruns are comparable.
+  * Isolated: long-term memory is neither read nor written during evals.
+  * Durable: results are saved after every task (and mirrored, if configured),
+    and an interrupted run can be resumed from its results file.
+"""
 
 import json
 import logging
+import os
+import shutil
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -40,6 +50,15 @@ def _mean(values: list[Optional[float]]) -> Optional[float]:
     return round(sum(present) / len(present), 3) if present else None
 
 
+def _atomic_write_json(path: Path, data: dict) -> None:
+    """Write JSON via a temp file + rename, so a crash never leaves half a file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, path)
+
+
 class EvalRunner:
     """Runs eval tasks through the orchestrator and computes metrics."""
 
@@ -47,11 +66,28 @@ class EvalRunner:
         self,
         orchestrator: Optional[Orchestrator] = None,
         trajectory_logger: Optional[TrajectoryLogger] = None,
+        deterministic: bool = True,
     ):
         self.orchestrator = orchestrator or Orchestrator()
         self.trajectory_logger = trajectory_logger or TrajectoryLogger()
+        self.deterministic = deterministic
         self.tasks = _load_tasks()
         RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    @contextmanager
+    def _eval_conditions(self):
+        """Switch the shared model manager into eval mode, then restore it.
+
+        The API server shares one orchestrator between chat and evals, so the
+        previous setting is always restored, even if a task crashes.
+        """
+        model_manager = self.orchestrator.model_manager
+        previous = getattr(model_manager, "deterministic", False)
+        model_manager.deterministic = self.deterministic
+        try:
+            yield
+        finally:
+            model_manager.deterministic = previous
 
     def _find_task(self, task_id: str) -> dict:
         for task_def in self.tasks:
@@ -60,13 +96,14 @@ class EvalRunner:
         raise ValueError(f"Task '{task_id}' not found in tasks.json")
 
     def run_single(self, task_id: str) -> dict:
-        """Run one eval task and return its metrics."""
+        """Run one eval task under eval conditions and return its metrics."""
         task_def = self._find_task(task_id)
         logger.info(f"[EVAL] Running {task_id}: {task_def['task'][:60]}...")
         start = time.time()
 
         try:
-            result = self.orchestrator.run(task_def["task"])
+            with self._eval_conditions():
+                result = self.orchestrator.run(task_def["task"], use_memory=False)
             self.trajectory_logger.save(task_def["task"], result)
             trajectory = self.trajectory_logger.get(result.task_id)
             metrics = compute_all_metrics(trajectory, task_def)
@@ -105,34 +142,81 @@ class EvalRunner:
         self,
         categories: Optional[list[str]] = None,
         max_difficulty: int = 5,
+        resume: Optional[str] = None,
     ) -> dict:
-        """Run all (optionally filtered) tasks and save results to JSON."""
+        """Run all (optionally filtered) tasks, saving results after each one.
+
+        resume: path to a results file from an interrupted run. Its filters
+        are reused, finished tasks are kept, and only the missing (or
+        crashed) tasks are run. Results keep going to the same file name.
+        """
+        previous: list[dict] = []
+        if resume:
+            prior = json.loads(Path(resume).read_text())
+            filters = prior.get("filters", {})
+            categories = filters.get("categories", categories)
+            max_difficulty = filters.get("max_difficulty", max_difficulty)
+            previous = [r for r in prior.get("task_results", []) if r.get("error") is None]
+            output_name = Path(resume).name
+            run_timestamp = prior.get("run_timestamp")
+            logger.info(f"[EVAL] Resuming {output_name}: {len(previous)} tasks already done")
+        else:
+            output_name = f"eval_{time.strftime('%Y%m%d_%H%M%S')}.json"
+            run_timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
         filtered = [
             t for t in self.tasks
             if (categories is None or t["category"] in categories)
             and t["difficulty"] <= max_difficulty
         ]
+        order = {t["task_id"]: i for i, t in enumerate(filtered)}
+        done = {r["task_id"] for r in previous}
+        task_results = [r for r in previous if r["task_id"] in order]
+        remaining = [t for t in filtered if t["task_id"] not in done]
+
+        meta = {
+            "run_timestamp": run_timestamp,
+            "filters": {"categories": categories, "max_difficulty": max_difficulty},
+            "deterministic": self.deterministic,
+            "planned_tasks": len(filtered),
+        }
         logger.info(
-            f"[EVAL] Running {len(filtered)} tasks "
+            f"[EVAL] {len(remaining)} of {len(filtered)} tasks to run "
             f"(categories={categories}, max_difficulty={max_difficulty})"
         )
 
-        task_results = []
-        for i, task_def in enumerate(filtered, 1):
-            logger.info(f"[EVAL] [{i}/{len(filtered)}] {task_def['task_id']}")
+        for i, task_def in enumerate(remaining, 1):
+            logger.info(f"[EVAL] [{i}/{len(remaining)}] {task_def['task_id']}")
             task_results.append(self.run_single(task_def["task_id"]))
+            task_results.sort(key=lambda r: order[r["task_id"]])
+            self._save(output_name, meta, task_results, finished=False)
 
+        output = self._save(output_name, meta, task_results, finished=True)
+        logger.info(f"[EVAL] Results saved to {RESULTS_DIR / output_name}")
+        return output
+
+    def _save(self, name: str, meta: dict, task_results: list[dict], finished: bool) -> dict:
+        """Write the results file (and its mirror copy). Returns the payload."""
         output = {
-            "run_timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            **meta,
+            "finished": finished,
             "total_tasks": len(task_results),
             "summary": self._compute_summary(task_results),
             "task_results": task_results,
         }
+        _atomic_write_json(RESULTS_DIR / name, output)
 
-        output_path = RESULTS_DIR / f"eval_{time.strftime('%Y%m%d_%H%M%S')}.json"
-        with open(output_path, "w") as f:
-            json.dump(output, f, indent=2)
-        logger.info(f"[EVAL] Results saved to {output_path}")
+        mirror = settings.eval_mirror_dir
+        if mirror:
+            try:
+                mirror_path = Path(mirror) / name
+                mirror_path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = mirror_path.with_suffix(".json.tmp")
+                shutil.copyfile(RESULTS_DIR / name, tmp)
+                os.replace(tmp, mirror_path)
+            except OSError as e:  # a mirror failure must never stop the run
+                logger.error(f"[EVAL] Could not mirror results to {mirror}: {e}")
+
         return output
 
     @staticmethod

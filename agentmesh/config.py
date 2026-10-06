@@ -2,6 +2,7 @@
 """Centralised configuration. All tunables live here."""
 
 from pathlib import Path
+from typing import Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
@@ -42,6 +43,11 @@ class Settings(BaseSettings):
     db_path: Path = Field(default=Path("data/agentmesh.db"))
     faiss_index_path: Path = Field(default=Path("data/kb.faiss"))
     kb_index_path: Path = Field(default=Path("data/kb.faiss"))
+
+    # ── Evaluation ──────────────────────────────────────────────
+    # Optional second folder that eval results are copied to after every
+    # task (e.g. a mounted Google Drive), so a crash or disconnect keeps them.
+    eval_mirror_dir: Optional[Path] = Field(default=None)
 
     # ── Server ──────────────────────────────────────────────────
     server_host: str = Field(default="0.0.0.0")

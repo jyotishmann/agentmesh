@@ -4,6 +4,7 @@
 import hashlib
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -57,18 +58,110 @@ class _LoopDetector:
         return hashlib.sha256(serialised.encode()).hexdigest()[:16]
 
 
-_CODE_HINTS = ("code", "python", "script", "function", "implement", "program", "class")
-_COMPUTE_HINTS = ("calculate", "compute", "simulate", "mean", "median", "average", "statistic")
+# ── Plan routing rules ──────────────────────────────────────────────
+
+SPECIALISTS = ("research", "coder", "analyst")
+CODE_CAPABLE = ("coder", "analyst")  # specialists that can call run_python
+MAX_SUB_TASKS = 4
+
+# "Write a Python function", "Implement merge sort in Python", "using Python".
+# A verb is required, and [^.?!]* keeps the match inside one sentence, so
+# "the history of the Python programming language" is NOT a coding request.
+_CODE_INTENT = re.compile(
+    r"\b(?:write|implement|create|build|generate)\b[^.?!]*"
+    r"\b(?:python|code|script|function|class|program)\b"
+    r"|\b(?:in|using|with) python\b",
+    re.IGNORECASE,
+)
+_COMPUTE_INTENT = re.compile(
+    r"\b(?:calculate|compute|simulate|count|mean|median|average|statistics?)\b",
+    re.IGNORECASE,
+)
+
+
+def _required_specialist(task: str) -> str | None:
+    """Return 'coder' or 'analyst' if the task needs code execution, else None."""
+    if _CODE_INTENT.search(task):
+        return "coder"
+    if _COMPUTE_INTENT.search(task):
+        return "analyst"
+    return None
 
 
 def _fallback_specialist(task: str) -> str:
-    """Pick a specialist when the planner fails. Keyword-based, deliberately simple."""
-    lowered = task.lower()
-    if any(hint in lowered for hint in _CODE_HINTS):
-        return "coder"
-    if any(hint in lowered for hint in _COMPUTE_HINTS):
-        return "analyst"
-    return "research"
+    """Specialist to use when the planner gives no usable plan."""
+    return _required_specialist(task) or "research"
+
+
+def _validate_plan(task: str, raw_plan) -> tuple[list[dict], list[str]]:
+    """Turn the planner's raw output into a plan the orchestrator can trust.
+
+    Returns (plan, notes). Each note describes one correction, so the
+    trajectory shows exactly how the planner's plan was changed.
+
+    Rules, in order:
+      1. Drop malformed steps; map unknown specialists to research.
+      2. Empty plan -> one step for the fallback specialist.
+      3. Merge consecutive steps for the same specialist (one call, not two).
+      4. Cap the plan at MAX_SUB_TASKS steps.
+      5. If the task needs code execution but no step can run code,
+         append a step for the specialist that can.
+    """
+    notes: list[str] = []
+    steps: list[dict] = []
+
+    if isinstance(raw_plan, list):
+        for item in raw_plan:
+            if not isinstance(item, dict):
+                notes.append("dropped a malformed step")
+                continue
+            specialist = str(item.get("specialist", "")).strip().lower()
+            if specialist not in SPECIALISTS:
+                notes.append(f"unknown specialist '{specialist}' -> research")
+                specialist = "research"
+            description = str(item.get("description") or "").strip() or task
+            steps.append({"description": description, "specialist": specialist})
+
+    if not steps:
+        specialist = _fallback_specialist(task)
+        notes.append(f"empty plan -> single {specialist} step")
+        return [{"description": task, "specialist": specialist}], notes
+
+    merged = [steps[0]]
+    for step in steps[1:]:
+        if step["specialist"] == merged[-1]["specialist"]:
+            merged[-1] = {
+                "description": f"{merged[-1]['description']} Then: {step['description']}",
+                "specialist": step["specialist"],
+            }
+            notes.append(f"merged consecutive {step['specialist']} steps")
+        else:
+            merged.append(step)
+
+    if len(merged) > MAX_SUB_TASKS:
+        notes.append(f"plan capped at {MAX_SUB_TASKS} steps (was {len(merged)})")
+        merged = merged[:MAX_SUB_TASKS]
+
+    required = _required_specialist(task)
+    if required and not any(s["specialist"] in CODE_CAPABLE for s in merged):
+        merged.append({"description": task, "specialist": required})
+        notes.append(f"task needs code execution -> added {required} step")
+
+    return merged, notes
+
+
+def _revision_specialist(task: str, plan: list[dict]) -> str:
+    """Pick who revises a rejected answer.
+
+    The revision replaces the whole answer, so it should go to a specialist
+    that can redo the work: for tasks that need code, the last code-capable
+    step in the plan; otherwise the last step's specialist.
+    """
+    if _required_specialist(task):
+        capable = [s["specialist"] for s in plan if s["specialist"] in CODE_CAPABLE]
+        if capable:
+            return capable[-1]
+    return plan[-1]["specialist"]
 
 
 class Orchestrator:
@@ -142,8 +235,12 @@ class Orchestrator:
 
     # ── Main loop ───────────────────────────────────────────────
 
-    def run(self, task: str, session_id: str = "") -> OrchestratorResult:
-        """Execute a full task lifecycle."""
+    def run(self, task: str, session_id: str = "", use_memory: bool = True) -> OrchestratorResult:
+        """Execute a full task lifecycle.
+
+        use_memory=False skips reading and writing long-term memory. The eval
+        runner uses it so one eval run can't see answers from a previous one.
+        """
         task_id = f"task_{uuid4().hex[:12]}"
         session_id = session_id or f"session_{uuid4().hex[:8]}"
         events: list[dict] = []
@@ -155,7 +252,7 @@ class Orchestrator:
         buffer = self._get_session(session_id)
         buffer.add("user", task)
 
-        memory_context = self.memory.get_memory_context(task)
+        memory_context = self.memory.get_memory_context(task) if use_memory else ""
         logger.info(f"[{task_id}] Starting task: {task[:80]}...")
 
         # ── Phase 1: Planning ───────────────────────────────────
@@ -170,14 +267,19 @@ class Orchestrator:
         )
 
         try:
-            sub_tasks = json.loads(plan_response.output)
+            raw_plan = json.loads(plan_response.output)
         except json.JSONDecodeError:
-            sub_tasks = []
+            raw_plan = []
 
-        if not isinstance(sub_tasks, list) or not sub_tasks:
-            specialist = _fallback_specialist(task)
-            logger.warning(f"[{task_id}] Planner returned an empty plan. Falling back to {specialist}.")
-            sub_tasks = [{"description": task, "specialist": specialist, "required_tools": []}]
+        sub_tasks, plan_notes = _validate_plan(task, raw_plan)
+        if plan_notes:
+            logger.warning(f"[{task_id}] Plan adjusted: {'; '.join(plan_notes)}")
+            step += 1
+            self._log_event(
+                events, step, "Orchestrator", "plan_adjusted",
+                tool_output=json.dumps(sub_tasks),
+                metadata={"notes": plan_notes},
+            )
 
         logger.info(f"[{task_id}] Plan: {len(sub_tasks)} sub-tasks")
 
@@ -191,14 +293,9 @@ class Orchestrator:
             if hit_limit:
                 break
 
-            specialist_name = sub_task.get("specialist", "research")
-            description = sub_task.get("description", task)
-
-            agent = self.specialists.get(specialist_name)
-            if agent is None:
-                logger.warning(f"Unknown specialist '{specialist_name}', using research")
-                specialist_name = "research"
-                agent = self.specialists["research"]
+            specialist_name = sub_task["specialist"]  # validated by _validate_plan
+            description = sub_task["description"]
+            agent = self.specialists[specialist_name]
 
             logger.info(f"[{task_id}] Sub-task {i+1}: {specialist_name} — {description[:60]}")
 
@@ -289,8 +386,7 @@ class Orchestrator:
                     feedback = critic_verdict.get("feedback", "Please improve the output.")
                     logger.info(f"[{task_id}] Critic rejected (cycle {revision_cycle + 1}): {feedback[:80]}")
 
-                    last_specialist = sub_tasks[-1].get("specialist", "research")
-                    agent = self.specialists.get(last_specialist, self.specialists["research"])
+                    agent = self.specialists[_revision_specialist(task, sub_tasks)]
 
                     revision_task = (
                         f"Task: {task}\n"
@@ -331,10 +427,11 @@ class Orchestrator:
         self._log_event(events, step, "Orchestrator", "final",
                         tool_output=assembled_output[:500])
 
-        try:
-            self.memory.store(task[:200], assembled_output[:200])
-        except Exception as e:
-            logger.error(f"Failed to store memory: {e}")
+        if use_memory:
+            try:
+                self.memory.store(task[:200], assembled_output[:200])
+            except Exception as e:
+                logger.error(f"Failed to store memory: {e}")
 
         buffer.add("assistant", assembled_output)
 
