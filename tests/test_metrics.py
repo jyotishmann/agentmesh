@@ -154,4 +154,7 @@ class TestComputeAll:
         assert "latency_ms" in results
         assert "token_efficiency" in results
         assert "critic_pass" in results
-        assert len(results) == 6
+        # added answer_correct and critic_agreement
+        assert "answer_correct" in results
+        assert "critic_agreement" in results
+        assert len(results) == 8
