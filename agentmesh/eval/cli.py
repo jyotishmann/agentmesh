@@ -3,7 +3,9 @@
 
 Usage:
     python -m agentmesh.eval.cli run [--task-id ID] [--category CAT] [--max-difficulty N]
+                                     [--resume PATH] [--sampled]
     python -m agentmesh.eval.cli report [--file PATH]
+    python -m agentmesh.eval.cli history
 """
 
 import argparse
@@ -11,6 +13,7 @@ import json
 import logging
 import sys
 from pathlib import Path
+from typing import Optional
 
 from agentmesh.config import settings
 
@@ -23,126 +26,152 @@ logger = logging.getLogger(__name__)
 RESULTS_DIR = Path(settings.db_path).parent / "eval_results"
 
 
+def _pct(value: Optional[float]) -> str:
+    """Format a 0-1 metric as a percentage; None (not applicable) as n/a."""
+    return "  n/a" if value is None else f"{value * 100:4.0f}%"
+
+
+def collect_runs(dirs: list[Path]) -> list[tuple[Path, dict]]:
+    """Load every eval results file found in dirs, one entry per run.
+
+    The same run can exist in two places (local results and the mirror).
+    Runs are keyed by file name, and the copy with more finished tasks wins.
+    """
+    best: dict[str, tuple[Path, dict]] = {}
+    for directory in dirs:
+        if not directory or not Path(directory).is_dir():
+            continue
+        for path in sorted(Path(directory).glob("eval_*.json")):
+            try:
+                data = json.loads(path.read_text())
+            except (json.JSONDecodeError, OSError):
+                logger.warning(f"Skipping unreadable results file: {path}")
+                continue
+            current = best.get(path.name)
+            if current is None or len(data.get("task_results", [])) > len(current[1].get("task_results", [])):
+                best[path.name] = (path, data)
+    return [best[name] for name in sorted(best)]
+
+
 def cmd_run(args: argparse.Namespace) -> None:
     """Execute eval tasks."""
-    # Import here to avoid loading models when just viewing reports
+    # Import here so `report` and `history` don't load any models
     from agentmesh.eval.runner import EvalRunner
 
-    runner = EvalRunner()
+    runner = EvalRunner(deterministic=not args.sampled)
 
     if args.task_id:
-        result = runner.run_single(args.task_id)
-        print(json.dumps(result, indent=2))
-    else:
-        categories = [args.category] if args.category else None
-        results = runner.run_all(
-            categories=categories,
-            max_difficulty=args.max_difficulty,
-        )
-        _print_summary(results["summary"])
+        print(json.dumps(runner.run_single(args.task_id), indent=2))
+        return
+
+    results = runner.run_all(
+        categories=[args.category] if args.category else None,
+        max_difficulty=args.max_difficulty,
+        resume=args.resume,
+    )
+    _print_summary(results["summary"])
 
 
 def cmd_report(args: argparse.Namespace) -> None:
-    """Print a report from saved results."""
+    """Print a report for one saved run (the latest by default)."""
     if args.file:
-        results_path = Path(args.file)
+        path = Path(args.file)
+        results = json.loads(path.read_text())
     else:
-        # Find the most recent results file
-        results_files = sorted(RESULTS_DIR.glob("eval_*.json"))
-        if not results_files:
+        runs = collect_runs([RESULTS_DIR, settings.eval_mirror_dir])
+        if not runs:
             print("No eval results found. Run 'python -m agentmesh.eval.cli run' first.")
             sys.exit(1)
-        results_path = results_files[-1]
+        path, results = runs[-1]
 
-    with open(results_path) as f:
-        results = json.load(f)
-
-    print(f"\n{'='*60}")
-    print(f"  Eval Report: {results_path.name}")
-    print(f"  Timestamp: {results.get('run_timestamp', 'unknown')}")
-    print(f"  Total tasks: {results.get('total_tasks', 0)}")
-    print(f"{'='*60}\n")
+    status = "finished" if results.get("finished", True) else "INCOMPLETE (resume with --resume)"
+    print(f"\n{'=' * 64}")
+    print(f"  Eval report: {path.name}  [{status}]")
+    print(f"  Tasks: {results.get('total_tasks', 0)} of {results.get('planned_tasks', '?')}"
+          f" | deterministic: {results.get('deterministic', 'unknown')}")
+    print(f"{'=' * 64}\n")
 
     _print_summary(results.get("summary", {}))
 
-    # Print per-task details
-    print(f"\n{'─'*60}")
-    print("  Per-Task Results")
-    print(f"{'─'*60}")
-
+    print(f"\n  {'Task':<16} {'Answer':<9} {'Critic':<7} {'Tool eff':>8} {'Time':>8}")
+    print(f"  {'-' * 52}")
     for r in results.get("task_results", []):
-        status = "PASS" if r.get("completed") else "FAIL"
-        error = f" ERROR: {r['error']}" if r.get("error") else ""
-        metrics_str = ", ".join(
-            f"{k}={v:.2f}" if isinstance(v, float) else f"{k}={v}"
-            for k, v in r.get("metrics", {}).items()
-            if k != "latency_ms"
-        )
-        print(f"  [{status}] {r['task_id']:<20} {metrics_str}{error}")
+        m = r.get("metrics", {})
+        answer = {1.0: "correct", 0.0: "WRONG"}.get(m.get("answer_correct"), "-")
+        critic = {1.0: "pass", 0.0: "reject"}.get(m.get("critic_pass"), "-")
+        tool_eff = m.get("tool_call_efficiency")
+        tool_str = "-" if tool_eff is None else f"{tool_eff:.2f}"
+        error = f"  ERROR: {r['error']}" if r.get("error") else ""
+        print(f"  {r['task_id']:<16} {answer:<9} {critic:<7} {tool_str:>8} "
+              f"{r.get('wall_time_s', 0):>7.1f}s{error}")
+
+
+def cmd_history(args: argparse.Namespace) -> None:
+    """Print one line per saved run, oldest first, for regression tracking."""
+    runs = collect_runs([RESULTS_DIR, settings.eval_mirror_dir])
+    if not runs:
+        print("No eval results found.")
+        return
+
+    print(f"\n  {'Run':<27} {'Tasks':>7} {'Det':>4} {'Complete':>9} {'Correct':>8} "
+          f"{'Graded':>7} {'Critic agr':>11} {'False pass':>11} {'Avg time':>9}")
+    print(f"  {'-' * 100}")
+    for path, data in runs:
+        o = data.get("summary", {}).get("overall", {})
+        tasks = f"{data.get('total_tasks', 0)}/{data.get('planned_tasks', data.get('total_tasks', 0))}"
+        det = {True: "yes", False: "no"}.get(data.get("deterministic"), "?")
+        flag = "" if data.get("finished", True) else "  (incomplete)"
+        print(f"  {path.name:<27} {tasks:>7} {det:>4} {_pct(o.get('task_completion')):>9} "
+              f"{_pct(o.get('answer_correct')):>8} {o.get('graded_tasks', '-'):>7} "
+              f"{_pct(o.get('critic_agreement')):>11} {_pct(o.get('critic_false_pass_rate')):>11} "
+              f"{o.get('avg_wall_time_s', 0):>8.1f}s{flag}")
 
 
 def _print_summary(summary: dict) -> None:
-    """Print formatted summary tables."""
-    overall = summary.get("overall", {})
-    if overall:
-        print("  Overall Metrics:")
-        for k, v in overall.items():
-            print(f"    {k:<25} {v}")
-        print()
+    """Print the headline metrics, then per-category accuracy."""
+    o = summary.get("overall", {})
+    if o:
+        print("  Overall")
+        print(f"    Answer correct     {_pct(o.get('answer_correct'))}  (over {o.get('graded_tasks', 0)} gradable tasks)")
+        print(f"    Task completion    {_pct(o.get('task_completion'))}")
+        print(f"    Critic agreement   {_pct(o.get('critic_agreement'))}")
+        print(f"    Critic false-pass  {_pct(o.get('critic_false_pass_rate'))}")
+        print(f"    Tool efficiency    {_pct(o.get('tool_call_efficiency'))}")
+        print(f"    No loops           {_pct(o.get('loop_detected'))}")
+        print(f"    Avg time / task    {o.get('avg_wall_time_s', 0):.1f}s\n")
 
     by_cat = summary.get("by_category", {})
     if by_cat:
-        print("  By Category:")
-        header = f"    {'Category':<20} {'Completion':>10} {'Tool Eff':>10} {'No Loops':>10} {'Critic':>10} {'Count':>6}"
-        print(header)
-        print(f"    {'─'*66}")
-        for cat, metrics in sorted(by_cat.items()):
-            print(
-                f"    {cat:<20} "
-                f"{metrics.get('task_completion', 0):>10.3f} "
-                f"{metrics.get('tool_call_efficiency', 0):>10.3f} "
-                f"{metrics.get('loop_detected', 0):>10.3f} "
-                f"{metrics.get('critic_pass', 0):>10.3f} "
-                f"{metrics.get('count', 0):>6}"
-            )
-        print()
-
-    by_diff = summary.get("by_difficulty", {})
-    if by_diff:
-        print("  By Difficulty:")
-        for diff, metrics in sorted(by_diff.items()):
-            print(
-                f"    Level {diff}: "
-                f"completion={metrics.get('task_completion', 0):.3f} "
-                f"(n={metrics.get('count', 0)})"
-            )
+        print(f"  {'Category':<18} {'Correct':>8} {'Complete':>9} {'Critic agr':>11} {'Count':>6}")
+        for category, m in sorted(by_cat.items()):
+            print(f"  {category:<18} {_pct(m.get('answer_correct')):>8} "
+                  f"{_pct(m.get('task_completion')):>9} {_pct(m.get('critic_agreement')):>11} "
+                  f"{m.get('count', 0):>6}")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="AgentMesh Eval Framework CLI"
-    )
+    parser = argparse.ArgumentParser(description="AgentMesh Eval Framework CLI")
     subparsers = parser.add_subparsers(dest="command")
 
-    # Run command
     run_parser = subparsers.add_parser("run", help="Run eval tasks")
     run_parser.add_argument("--task-id", type=str, help="Run a single task by ID")
     run_parser.add_argument("--category", type=str, help="Filter by category")
-    run_parser.add_argument(
-        "--max-difficulty", type=int, default=5,
-        help="Max difficulty level (1-5, default=5)"
-    )
+    run_parser.add_argument("--max-difficulty", type=int, default=5,
+                            help="Max difficulty level (1-5, default=5)")
+    run_parser.add_argument("--resume", type=str,
+                            help="Continue an interrupted run from its results file")
+    run_parser.add_argument("--sampled", action="store_true",
+                            help="Sample instead of greedy decoding (results will vary)")
 
-    # Report command
-    report_parser = subparsers.add_parser("report", help="Print eval report")
-    report_parser.add_argument("--file", type=str, help="Path to results JSON")
+    report_parser = subparsers.add_parser("report", help="Report on one saved run")
+    report_parser.add_argument("--file", type=str, help="Path to a results JSON file")
+
+    subparsers.add_parser("history", help="One line per saved run")
 
     args = parser.parse_args()
-
-    if args.command == "run":
-        cmd_run(args)
-    elif args.command == "report":
-        cmd_report(args)
+    commands = {"run": cmd_run, "report": cmd_report, "history": cmd_history}
+    if args.command in commands:
+        commands[args.command](args)
     else:
         parser.print_help()
 
