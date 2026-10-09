@@ -6,6 +6,7 @@ Usage:
                                      [--resume PATH] [--sampled]
     python -m agentmesh.eval.cli report [--file PATH]
     python -m agentmesh.eval.cli history
+    python -m agentmesh.eval.cli regrade FILE [--db PATH]
 """
 
 import argparse
@@ -89,6 +90,11 @@ def cmd_report(args: argparse.Namespace) -> None:
     print(f"  Eval report: {path.name}  [{status}]")
     print(f"  Tasks: {results.get('total_tasks', 0)} of {results.get('planned_tasks', '?')}"
           f" | deterministic: {results.get('deterministic', 'unknown')}")
+    env = results.get("environment")
+    if env:
+        print(f"  Env: torch {env.get('torch')} | transformers {env.get('transformers')} | GPU {env.get('gpu')}")
+    if results.get("regraded_from"):
+        print(f"  Regraded from {results['regraded_from']} at {results.get('regraded_at')}")
     print(f"{'=' * 64}\n")
 
     _print_summary(results.get("summary", {}))
@@ -106,6 +112,23 @@ def cmd_report(args: argparse.Namespace) -> None:
               f"{r.get('wall_time_s', 0):>7.1f}s{error}")
 
 
+def cmd_regrade(args: argparse.Namespace) -> None:
+    """Re-score a saved run with the current grader. No GPU, no model calls."""
+    from agentmesh.eval.runner import regrade
+
+    results, changes = regrade(args.file, db_path=args.db)
+    marks = {1.0: "correct", 0.0: "WRONG", None: "-"}
+
+    print(f"\n  Regraded {Path(args.file).name}: {len(changes)} verdict(s) changed")
+    for change in changes:
+        print(f"    {change['task_id']:<16} {marks[change['before']]:>7} -> {marks[change['after']]}")
+    missing = results.get("regrade_missing", [])
+    if missing:
+        print(f"  Kept original metrics for {len(missing)} task(s) with no trajectory: {', '.join(missing)}")
+    print()
+    _print_summary(results["summary"])
+
+
 def cmd_history(args: argparse.Namespace) -> None:
     """Print one line per saved run, oldest first, for regression tracking."""
     runs = collect_runs([RESULTS_DIR, settings.eval_mirror_dir])
@@ -113,15 +136,15 @@ def cmd_history(args: argparse.Namespace) -> None:
         print("No eval results found.")
         return
 
-    print(f"\n  {'Run':<27} {'Tasks':>7} {'Det':>4} {'Complete':>9} {'Correct':>8} "
+    print(f"\n  {'Run':<36} {'Tasks':>7} {'Det':>4} {'Complete':>9} {'Correct':>8} "
           f"{'Graded':>7} {'Critic agr':>11} {'False pass':>11} {'Avg time':>9}")
-    print(f"  {'-' * 100}")
+    print(f"  {'-' * 109}")
     for path, data in runs:
         o = data.get("summary", {}).get("overall", {})
         tasks = f"{data.get('total_tasks', 0)}/{data.get('planned_tasks', data.get('total_tasks', 0))}"
         det = {True: "yes", False: "no"}.get(data.get("deterministic"), "?")
         flag = "" if data.get("finished", True) else "  (incomplete)"
-        print(f"  {path.name:<27} {tasks:>7} {det:>4} {_pct(o.get('task_completion')):>9} "
+        print(f"  {path.name:<36} {tasks:>7} {det:>4} {_pct(o.get('task_completion')):>9} "
               f"{_pct(o.get('answer_correct')):>8} {o.get('graded_tasks', '-'):>7} "
               f"{_pct(o.get('critic_agreement')):>11} {_pct(o.get('critic_false_pass_rate')):>11} "
               f"{o.get('avg_wall_time_s', 0):>8.1f}s{flag}")
@@ -168,8 +191,13 @@ def main() -> None:
 
     subparsers.add_parser("history", help="One line per saved run")
 
+    regrade_parser = subparsers.add_parser("regrade", help="Re-score a saved run with the current grader")
+    regrade_parser.add_argument("file", type=str, help="Path to a results JSON file")
+    regrade_parser.add_argument("--db", type=str,
+                                help="Trajectory database to read answers from (default: data/trajectories.db)")
+
     args = parser.parse_args()
-    commands = {"run": cmd_run, "report": cmd_report, "history": cmd_history}
+    commands = {"run": cmd_run, "report": cmd_report, "history": cmd_history, "regrade": cmd_regrade}
     if args.command in commands:
         commands[args.command](args)
     else:
