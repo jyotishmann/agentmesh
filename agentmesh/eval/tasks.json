@@ -198,11 +198,13 @@
         "Turing"
       ],
       [
-        "1950",
-        "imitation game"
+        "human"
+      ],
+      [
+        "pass"
       ]
     ],
-    "grading_notes": "Proposed by Alan Turing in 1950 as the 'imitation game'. Claims of passing are debated."
+    "grading_notes": "Must explain the test (a machine judged against a human) and address whether any AI has passed. The 1950 date was dropped from the expected answer: the question doesn't ask for it."
   },
   {
     "task_id": "code_011",
@@ -220,10 +222,17 @@
       [
         "is prime",
         "is a prime",
+        "is indeed a prime",
+        "a prime number",
         "True"
       ]
     ],
-    "grading_notes": "Should run code. 97 is prime."
+    "grading_notes": "97 is prime. Correct answers are phrased many ways ('97 is indeed a prime number'), so the grader accepts several phrasings and rejects any answer containing a negation ('not prime', 'not a prime') or 'False'.",
+    "forbidden": [
+      "not prime",
+      "not a prime",
+      "False"
+    ]
   },
   {
     "task_id": "code_012",
@@ -834,10 +843,11 @@
         "Guido"
       ],
       [
+        "1989",
         "1991"
       ]
     ],
-    "grading_notes": "Guido van Rossum, first released 1991, Python 2 (2000), Python 3 (2008), recent releases."
+    "grading_notes": "Guido van Rossum; creation dated by conception (1989) or first release (1991), both legitimate starting points for a timeline."
   },
   {
     "task_id": "creative_048",
