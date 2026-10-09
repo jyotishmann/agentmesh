@@ -11,9 +11,11 @@ Reliability guarantees (PR 14):
 import json
 import logging
 import os
+import platform
 import shutil
 import time
 from contextlib import contextmanager
+from importlib import metadata
 from pathlib import Path
 from typing import Optional
 
@@ -48,6 +50,42 @@ def _mean(values: list[Optional[float]]) -> Optional[float]:
     """Average of the non-None values, or None if there are none."""
     present = [v for v in values if v is not None]
     return round(sum(present) / len(present), 3) if present else None
+
+
+def environment_info() -> dict:
+    """Package versions and hardware this run used.
+
+    Two runs of identical code can differ if a new session installed newer
+    library versions. Recording them makes such differences traceable.
+    """
+    info = {"python": platform.python_version()}
+    for package in ("torch", "transformers", "sentence-transformers", "faiss-cpu", "ddgs"):
+        try:
+            info[package] = metadata.version(package)
+        except metadata.PackageNotFoundError:
+            info[package] = None
+    try:
+        import torch  # already imported by the model layer; cheap here
+        info["gpu"] = torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
+        info["cuda"] = torch.version.cuda
+    except Exception:  # never let metadata collection break a run
+        info["gpu"] = info["cuda"] = None
+    return info
+
+
+def _mirror(path: Path) -> None:
+    """Copy a results file to settings.eval_mirror_dir, if configured."""
+    mirror = settings.eval_mirror_dir
+    if not mirror:
+        return
+    try:
+        mirror_path = Path(mirror) / path.name
+        mirror_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = mirror_path.with_suffix(".json.tmp")
+        shutil.copyfile(path, tmp)
+        os.replace(tmp, mirror_path)
+    except OSError as e:  # a mirror failure must never stop the run
+        logger.error(f"[EVAL] Could not mirror results to {mirror}: {e}")
 
 
 def _atomic_write_json(path: Path, data: dict) -> None:
@@ -179,6 +217,7 @@ class EvalRunner:
             "filters": {"categories": categories, "max_difficulty": max_difficulty},
             "deterministic": self.deterministic,
             "planned_tasks": len(filtered),
+            "environment": environment_info(),
         }
         logger.info(
             f"[EVAL] {len(remaining)} of {len(filtered)} tasks to run "
@@ -205,18 +244,7 @@ class EvalRunner:
             "task_results": task_results,
         }
         _atomic_write_json(RESULTS_DIR / name, output)
-
-        mirror = settings.eval_mirror_dir
-        if mirror:
-            try:
-                mirror_path = Path(mirror) / name
-                mirror_path.parent.mkdir(parents=True, exist_ok=True)
-                tmp = mirror_path.with_suffix(".json.tmp")
-                shutil.copyfile(RESULTS_DIR / name, tmp)
-                os.replace(tmp, mirror_path)
-            except OSError as e:  # a mirror failure must never stop the run
-                logger.error(f"[EVAL] Could not mirror results to {mirror}: {e}")
-
+        _mirror(RESULTS_DIR / name)
         return output
 
     @staticmethod
@@ -272,3 +300,65 @@ class EvalRunner:
             "by_category": by_category,
             "by_difficulty": by_difficulty,
         }
+
+
+# ── Regrading ───────────────────────────────────────────────────────
+
+def regrade(results_path: str, db_path: Optional[str] = None) -> tuple[dict, list[dict]]:
+    """Re-score a saved run with the current grader and tasks.json.
+
+    No model is called: each task's stored trajectory (answer text, tool
+    calls, critic verdicts) is loaded from the trajectory database and the
+    metrics are recomputed. This lets a grader fix be measured on the exact
+    answers that exposed it, in seconds and without a GPU.
+
+    The result is saved next to the original as <name>_regraded.json; the
+    original file is never modified.
+
+    Returns (regraded_results, changes), where changes lists every task
+    whose answer_correct verdict moved.
+    """
+    source = Path(results_path)
+    original = json.loads(source.read_text())
+    task_defs = {t["task_id"]: t for t in _load_tasks()}
+    trajectories = TrajectoryLogger(db_path=db_path) if db_path else TrajectoryLogger()
+
+    regraded_results, changes, missing = [], [], []
+    for result in original.get("task_results", []):
+        updated = dict(result)
+        task_def = task_defs.get(result["task_id"])
+        trajectory = (
+            trajectories.get(result["trajectory_id"])
+            if result.get("trajectory_id") and task_def
+            else None
+        )
+
+        if trajectory is None:
+            missing.append(result["task_id"])  # crashed task, or not in this database
+        else:
+            updated["metrics"] = {
+                **compute_all_metrics(trajectory, task_def),
+                "latency_ms": result["metrics"].get("latency_ms"),  # timing isn't re-measured
+            }
+            updated["gradable"] = task_def.get("gradable", False)
+            before = result["metrics"].get("answer_correct")
+            after = updated["metrics"].get("answer_correct")
+            if before != after:
+                changes.append({"task_id": result["task_id"], "before": before, "after": after})
+        regraded_results.append(updated)
+
+    output = {
+        **{k: v for k, v in original.items() if k not in ("summary", "task_results")},
+        "regraded_from": source.name,
+        "regraded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "regrade_missing": missing,
+        "summary": EvalRunner._compute_summary(regraded_results),
+        "task_results": regraded_results,
+    }
+
+    stem = source.stem.removesuffix("_regraded")  # regrading a regrade doesn't stack suffixes
+    out_path = RESULTS_DIR / f"{stem}_regraded.json"
+    _atomic_write_json(out_path, output)
+    _mirror(out_path)
+    logger.info(f"[EVAL] Regraded {source.name}: {len(changes)} verdicts changed -> {out_path}")
+    return output, changes

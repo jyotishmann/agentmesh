@@ -96,12 +96,19 @@ def normalise_answer(text: str) -> str:
     return _THOUSANDS_SEPARATOR.sub("", text.lower())
 
 
+# Inflections a word may carry and still count as the same word:
+# "edit" -> "edits", "edited", "editing"; "pass" -> "passes", "passed"
+_WORD_FORMS = r"(?:s|es|d|ed|ing)?"
+
+
 def contains_term(normalised_text: str, term: str) -> bool:
     """Whole-token, case-insensitive match of term inside normalised_text.
 
     "41" matches "index 41." but not "141" or "410"; "26.1" does not match
     "26.12" (list both as alternatives when either is acceptable). An
     integer still matches its decimal form: "16470" matches "16470.09".
+    A term ending in a letter also matches its common inflections, so
+    "edit" matches "gene-editing" (but "Titan" does not match "Titania").
     A whitespace-insensitive second pass lets "[1,2,3]" match "[1, 2, 3]".
     """
     needle = normalise_answer(term).strip()
@@ -110,7 +117,8 @@ def contains_term(normalised_text: str, term: str) -> bool:
 
     def _search(haystack: str, pattern_text: str) -> bool:
         # Not preceded or followed by a letter/digit -> whole-token match
-        pattern = rf"(?<![a-z0-9]){re.escape(pattern_text)}(?![a-z0-9])"
+        forms = _WORD_FORMS if pattern_text[-1].isalpha() else ""
+        pattern = rf"(?<![a-z0-9]){re.escape(pattern_text)}{forms}(?![a-z0-9])"
         return re.search(pattern, haystack) is not None
 
     if _search(normalised_text, needle):
@@ -130,6 +138,10 @@ def answer_correct(trajectory: dict, task_def: dict) -> Optional[float]:
         [["Canberra"]]                       -> must mention Canberra
         [["4181", "6765"], ["34"]]           -> (4181 OR 6765) AND 34
 
+    task_def["forbidden"] (optional) lists phrases that make an answer
+    wrong even if every group matches, e.g. ["not prime"] so that
+    "97 is not a prime number" can't pass on the word "prime".
+
     Returns None for tasks marked "gradable": false.
     """
     if not task_def.get("gradable", False):
@@ -141,6 +153,8 @@ def answer_correct(trajectory: dict, task_def: dict) -> Optional[float]:
         return None
 
     answer = normalise_answer(trajectory.get("final_output", "") or "")
+    if any(contains_term(answer, phrase) for phrase in task_def.get("forbidden", [])):
+        return 0.0
     for alternatives in groups:
         if not any(contains_term(answer, alt) for alt in alternatives):
             return 0.0
