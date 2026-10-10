@@ -15,7 +15,7 @@ pydantic-settings>=2.2.0
 sse-starlette>=2.1.0
 
 # Frontend
-streamlit>=1.35.0
+streamlit>=1.37.0          # bar_chart(stack=, horizontal=, x_label=, y_label=)
 streamlit-mermaid>=0.2.0
 
 # Tools
