@@ -3,10 +3,9 @@
 
 import json
 import logging
-import time
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,6 +29,26 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Results files are named eval_<timestamp>[_regraded].json. Anything else,
+# including "../" paths, is rejected before touching the filesystem.
+_RESULTS_FILE = re.compile(r"^eval_[A-Za-z0-9_]+\.json$")
+
+
+def _results_dir() -> Path:
+    results_dir = Path(settings.db_path).parent / "eval_results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    return results_dir
+
+
+def _load_results_file(filename: str) -> dict:
+    """Load one results file by name, refusing anything outside the results folder."""
+    if not _RESULTS_FILE.match(filename):
+        raise HTTPException(status_code=400, detail=f"Invalid results file name: {filename!r}")
+    path = _results_dir() / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"Results file '{filename}' not found.")
+    return json.loads(path.read_text())
 
 
 @asynccontextmanager
@@ -163,15 +182,9 @@ def chat_stream(request: ChatRequest):
         },
     )
 
-@app.get("/trajectory/{task_id}", response_model=TrajectoryResponse)
-def get_trajectory(task_id: str):
-    """Load a full trajectory by task_id."""
-    trajectory = app.state.trajectory_logger.get(task_id)
-    if trajectory is None:
-        raise HTTPException(status_code=404, detail=f"Trajectory '{task_id}' not found.")
-    return TrajectoryResponse(**trajectory)
-
-
+# Order matters: FastAPI matches routes in registration order, so
+# "/trajectory/{task_id}" must come after "/trajectory/list" or it
+# answers "list" as a task ID (404).
 @app.get("/trajectory/list", response_model=TrajectoryListResponse)
 def list_trajectories(
     limit: int = Query(default=20, ge=1, le=100),
@@ -190,6 +203,15 @@ def list_trajectories(
         trajectories=trajectories,
         total=total,
     )
+
+@app.get("/trajectory/{task_id}", response_model=TrajectoryResponse)
+def get_trajectory(task_id: str):
+    """Load a full trajectory by task_id."""
+    trajectory = app.state.trajectory_logger.get(task_id)
+    if trajectory is None:
+        raise HTTPException(status_code=404, detail=f"Trajectory '{task_id}' not found.")
+    return TrajectoryResponse(**trajectory)
+
 
 @app.post("/eval/run")
 def run_eval(request: EvalRunRequest):
@@ -224,20 +246,18 @@ def run_eval(request: EvalRunRequest):
 @app.get("/eval/results", response_model=EvalResultResponse)
 def get_eval_results(latest: bool = Query(default=True)):
     """List saved eval results. Optionally include the latest result."""
-    results_dir = Path(settings.db_path).parent / "eval_results"
-    results_dir.mkdir(parents=True, exist_ok=True)
-
     files = sorted(
-        [f.name for f in results_dir.glob("eval_*.json")],
+        [f.name for f in _results_dir().glob("eval_*.json")],
         reverse=True,
     )
-
-    latest_data = None
-    if latest and files:
-        with open(results_dir / files[0]) as f:
-            latest_data = json.load(f)
-
+    latest_data = _load_results_file(files[0]) if latest and files else None
     return EvalResultResponse(files=files, latest=latest_data)
+
+
+@app.get("/eval/results/{filename}")
+def get_eval_result(filename: str):
+    """Load one saved results file by name (used by the dashboard's run picker)."""
+    return _load_results_file(filename)
 
 
 @app.get("/eval/compare")
@@ -246,17 +266,8 @@ def compare_eval_runs(
     run_b: str = Query(..., description="Filename of second eval run"),
 ):
     """Compare two eval runs side by side."""
-    results_dir = Path(settings.db_path).parent / "eval_results"
-
-    try:
-        with open(results_dir / run_a) as f:
-            data_a = json.load(f)
-        with open(results_dir / run_b) as f:
-            data_b = json.load(f)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
+    # Both names go through the same check, so "../" can't escape the folder
     return {
-        "run_a": {"filename": run_a, "data": data_a},
-        "run_b": {"filename": run_b, "data": data_b},
+        "run_a": {"filename": run_a, "data": _load_results_file(run_a)},
+        "run_b": {"filename": run_b, "data": _load_results_file(run_b)},
     }

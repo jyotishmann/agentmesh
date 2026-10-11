@@ -1,84 +1,118 @@
-
 # AgentMesh
 
-A production multi-agent system built from first principles — no LangChain, no CrewAI, no framework abstractions.
+A multi-agent system built from scratch (no LangChain, no CrewAI), with an evaluation framework that measures whether its answers are actually right.
 
-## What This Is
+A planner splits a task into sub-tasks, specialist agents solve them with tools, and a critic checks the result. All of it runs on small open models (Qwen2.5-3B and 1.5B) on a single T4 GPU. Every tool call, token and verdict is logged, and a 50-task eval suite scores each run against known answers.
 
-AgentMesh takes a natural-language task, breaks it down through a **Planner Agent**, delegates sub-tasks to **Specialist Agents** (Research, Coder, Analyst), runs them against a **Tool Registry** (web search, code execution, file I/O, vector knowledge base), passes the output through a **Critic Agent** for quality gating, and returns the result — all while logging every tool call, token cost, and latency into a trajectory evaluation framework.
-
-## Why It's Different
-
-- **No framework lock-in**: The agent loop is ~200 lines of Python. Every piece is explainable.
-- **Loop detection**: Catches infinite tool-call cycles — the #1 failure mode in deployed agents.
-- **Trajectory eval suite**: 50 labelled tasks with known answers, run on every prompt change.
-- **Token cost tracking**: Every task produces a cost breakdown.
+![Eval dashboard](docs/images/eval_results.png)
 
 ## Architecture
 
 ```text
-User Task → Planner Agent → Sub-tasks
+User Task → Planner Agent → Sub-tasks (validated, max 4)
                               │
               ┌───────────────┼───────────────┐
               ▼               ▼               ▼
-        ResearchAgent   CoderAgent     AnalystAgent
+        ResearchAgent    CoderAgent     AnalystAgent
         (search_web,    (run_python,   (read_file,
          query_kb)       read/write)    run_python)
               │               │               │
               └───────────────┼───────────────┘
                               ▼
                         Critic Agent
-                        (pass/fail)
+                        (pass / reject)
                               │
                     ┌─────────┴─────────┐
                     ▼                   ▼
               Final Output        Revision Loop
                                   (max 2 cycles)
 
+All steps → Trajectory DB (SQLite) → Eval framework (50 tasks) → Dashboard
 ```
-All calls logged → Trajectory DB → Eval Framework (50 tasks)
 
-## Quick Start
+## Design choices
 
-The "30 seconds to running" section. A reviewer should be able to clone, install, and see the app working with exactly these commands. The `make` commands abstract away the underlying `python` and `uvicorn` calls.
+- **No agent framework.** The agent loop, tool-call parsing and orchestration are plain Python, so every behaviour can be read, tested and changed.
+- **Least-privilege tools.** Each specialist sees and can call only its own tools; a research agent can't run code.
+- **Loop detection and budgets.** Repeated identical tool calls are flagged in the trajectory and scored by the eval, and per-agent and per-task tool-call limits stop runaway runs.
+- **Correctness over completion.** Answers are graded against expected keyword groups with word-form matching and forbidden phrases (e.g. "not prime"). Tasks with random, live or creative output are excluded from accuracy rather than guessed at.
+- **Reproducible evals.** Greedy decoding, no memory carried between tasks, a save after every task, resumable runs, and library versions recorded in every results file.
+- **Cheap re-scoring.** `regrade` re-scores a saved run from its stored trajectories. A grader fix is measured in seconds, without a GPU.
 
-### Quick Start
+## Dashboard
+
+A Streamlit UI over a FastAPI backend:
+
+- **Eval Dashboard**: accuracy and critic metrics for any saved run, per-category breakdown, filters for wrong answers and critic mistakes, and a comparison view that lists every verdict that changed between two runs.
+- **Trajectory Viewer**: every step of a run (plan, tool calls, critique, revisions) with inputs, outputs, tokens and latency.
+- **Chat**: run a task and watch the agents work.
+
+| Compare two runs | Per-category results |
+|---|---|
+| ![Compare](docs/images/eval_compare.png) | ![Categories](docs/images/eval_categories.png) |
+
+![Trajectory viewer](docs/images/trajectories.png)
+
+## Quick start
+
+### Colab (recommended: free T4)
+
+Open [`notebooks/agentmesh_colab.ipynb`](notebooks/agentmesh_colab.ipynb) in Colab. It has sections for setup, tests, evals, results and the dashboard. Browsing results and the dashboard works on a CPU runtime; only running evals needs the GPU.
+
+### Local (needs a CUDA GPU with 12 GB+, e.g. a T4)
+
 ```bash
-# Clone
-git clone https://github.com/YOUR_USERNAME/agentmesh.git
+git clone https://github.com/jyotishmann/agentmesh.git
 cd agentmesh
-
-# Set up Python environment
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# Install dependencies
+python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
+cp .env.example .env                              # defaults work as-is
 
-# Configure (defaults work out of the box)
-cp .env.example .env
-
-# Start the API server
-make api
-
-# In a second terminal, start the Streamlit UI
-make ui
-
-# Open http://localhost:8501 in your browser
+make api   # terminal 1: API on http://localhost:8000
+make ui    # terminal 2: UI on http://localhost:8501
 ```
 
-## Usage and Eval Sections
+Both Qwen models stay loaded together (~9.5 GB in fp16). They download from Hugging Face on first use: Qwen2.5-3B-Instruct (planner and critic), Qwen2.5-1.5B-Instruct (specialists), and bge-small-en-v1.5 (embeddings).
 
-The eval section is highlighted because it's the differentiator. Showing that the project has a test suite with quantitative metrics is what separates it from demo-quality agent projects. The models section tells the reader exactly what hardware they need.
+## Running evals
 
-### Running the Eval Suite
 ```bash
-# Run all 50 evaluation tasks
-make eval
+python -m agentmesh.eval.cli run                         # all 50 tasks (~55 min on a T4)
+python -m agentmesh.eval.cli run --category factual_qa   # one category
+python -m agentmesh.eval.cli run --max-difficulty 1      # quick check (~5 min)
+python -m agentmesh.eval.cli run --resume FILE           # finish an interrupted run
+python -m agentmesh.eval.cli history                     # one line per saved run
+python -m agentmesh.eval.cli report --file FILE          # per-task detail
+python -m agentmesh.eval.cli regrade FILE                # re-score with the current grader (no GPU)
+```
 
-# Run a specific category
-python -m agentmesh.eval run --category research
+Categories: `factual_qa`, `code_generation`, `multi_step`, `analysis`, `creative` (10 tasks each, difficulty 1–5).
 
-# Compare two eval runs
-python -m agentmesh.eval compare run_A run_B
+## Tests
 
+```bash
+pytest tests/test_api.py tests/test_api_routes.py tests/test_correctness.py tests/test_reliability.py tests/test_grader.py -q
+```
+
+102 tests, no GPU and no model downloads: API routing and file access, grading rules pinned to real answers, metric aggregation, plan validation, and resumable runs.
+
+## Results run
+
+Baseline from Oct 9, 2026: all 50 tasks, deterministic decoding, one T4.
+
+| Metric | Value | Notes |
+|---|---|---|
+| **Answer accuracy** | **74%** (23 of 31) | Final answer matches the expected answer, on the 31 tasks with a fixed answer |
+| Critic agreement | 71% | The critic's pass/reject matches the grader |
+| Critic false-pass | 88% (7 of 8) | Wrong answers the critic approved |
+| Task completion | 88% | Runs that finished within limits (finished is not the same as correct) |
+| Avg time per task | 65 s | Plan, execute, critique, and up to 2 revisions |
+
+
+| Category | Correct | Graded tasks |
+|---|---|---|
+| code_generation | 89% | 8 / 9 |
+| factual_qa | 75% | 6 / 8 |
+| multi_step | 75% | 3 / 4 |
+| analysis | 50% | 4 / 8 |
+| creative | 100% | 2 / 2 |

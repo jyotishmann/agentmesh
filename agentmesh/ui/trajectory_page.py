@@ -1,8 +1,6 @@
 # file: agentmesh/ui/trajectory_page.py
 """Trajectory viewer — browse and inspect task execution timelines."""
 
-import json
-
 import requests
 import streamlit as st
 
@@ -49,7 +47,16 @@ def render_trajectory_page():
         st.info("No trajectories yet. Run a chat or eval to generate them.")
         return
 
-    st.caption(f"Showing {len(trajectories)} of {total} trajectories")
+    st.caption(
+        f"Showing {len(trajectories)} of {total} trajectories. "
+        "✅ means the run finished, not that the answer was right: "
+        "correctness is on the Eval Dashboard."
+    )
+
+    # Column headers, so each icon and number is labelled
+    header = st.columns([1, 3, 1, 1, 1, 1])
+    for col, title in zip(header, ["**Finished**", "**Task**", "**Tool calls**", "**Tokens**", "**Date**", ""]):
+        col.markdown(title)
 
     # Render as a table with view buttons
     for traj in trajectories:
@@ -81,6 +88,7 @@ def render_trajectory_page():
         st.session_state["traj_offset"] = offset + 15
         st.rerun()
 
+
 def _render_detail_view(api_url: str, task_id: str):
     """Render the detail view for a single trajectory."""
 
@@ -100,7 +108,7 @@ def _render_detail_view(api_url: str, task_id: str):
         return
 
     # ── Header ──────────────────────────────────────────────────
-    status = "✅ Completed" if traj.get("completed") else "❌ Partial"
+    status = "✅ Finished" if traj.get("completed") else "❌ Did not finish"
     st.subheader(f"{status} — {task_id}")
     st.markdown(f"**Task:** {traj.get('user_task', '')}")
 
