@@ -49,9 +49,9 @@ A Streamlit UI over a FastAPI backend:
 
 | Compare two runs | Per-category results |
 |---|---|
-| ![Compare](docs/images/eval_compare.png) | ![Categories](docs/images/eval_categories.png) |
+| ![Compare](agentmesh/docs/images/eval_compare.png) | ![Categories](agentmesh/docs/images/eval_categories.png) |
 
-![Trajectory viewer](docs/images/trajectories.png)
+![Trajectory viewer](agentmesh/docs/images/trajectories.png)
 
 ## Quick start
 
