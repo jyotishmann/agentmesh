@@ -6,7 +6,7 @@ A planner splits a task into sub-tasks, specialist agents solve them with tools,
 
 ![Eval dashboard](docs/images/eval_results.png)
 
-## How it works
+## Architecture
 
 ```text
 User Task → Planner Agent → Sub-tasks (validated, max 4)
