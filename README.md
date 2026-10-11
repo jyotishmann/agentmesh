@@ -4,7 +4,7 @@ A multi-agent system built from scratch (no LangChain, no CrewAI), with an evalu
 
 A planner splits a task into sub-tasks, specialist agents solve them with tools, and a critic checks the result. All of it runs on small open models (Qwen2.5-3B and 1.5B) on a single T4 GPU. Every tool call, token and verdict is logged, and a 50-task eval suite scores each run against known answers.
 
-![Eval dashboard](docs/images/eval_results.png)
+![Eval dashboard](agentmesh/docs/images/eval_results.png)
 
 ## Architecture
 
